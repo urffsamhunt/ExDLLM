@@ -1,0 +1,63 @@
+# DLLM English <-> Hindi Translation — Kaggle 2x T4 configuration
+# Two T4s (16GB each) via nn.DataParallel: batch 16 split 8 per GPU,
+# gradient_accumulation_steps 1 (effective batch stays 16).
+
+model:
+  backbone: "xlm-roberta-base"
+  hidden_dropout_prob: 0.1
+  attention_probs_dropout_prob: 0.1
+  tag_weights: [0.7, 0.8, 1.0, 2.0, 4.0]   # KEEP, DELETE, REPLACE, INSERT, EXPAND
+  len_smoothing: 0.15
+
+tokenizer:
+  base: "xlm-roberta-base"
+  max_length: 192
+
+training:
+  batch_size: 16
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  warmup_steps: 500
+  # With K=5 sub-iterations, each optimizer step costs ~5× more compute than single-stage
+  # training. max_steps is halved to maintain a roughly equivalent total FLOPs budget.
+  # gradient_accumulation_steps stays at 1 (DataParallel across 2×T4 already gives
+  # effective batch=16 per step; further accumulation is unnecessary).
+  max_steps: 25000               # reduced from 50000 (5 sub-iters ≈ 2.5× more FLOPs/step)
+  gradient_accumulation_steps: 1
+  log_every: 10
+  eval_every: 500
+  scheduled_sampling_prob: 0.3
+  bleu_every: 100             # evaluate BLEU every N steps
+  bleu_n: 50
+  # Progressive sub-iteration training: for each (prompt, response) pair, generate a
+  # trajectory of K canvases at decreasing noise levels, directly mirroring inference.
+  # Set to null (or remove) to disable and revert to single-stage random-t training.
+  sub_iterations: [1.0, 0.8, 0.6, 0.4, 0.2]
+  # Loss weights per stage — upweights high-masking stages to preserve the t_skew
+  # curriculum (model trains harder on near-fully-masked canvases like inference start).
+  sub_iteration_weights: [2.0, 1.5, 1.0, 0.75, 0.5]
+
+data:
+  dataset_name: "./data/en_hi_both_train.tsv"
+  val_dataset_name: "./data/en_hi_both_val.tsv"
+  bleu_test_path: "./data/en_hi_test.tsv"       # en->hi held-out BLEU set
+  bleu_n: 50
+  mode: "prompt_response"
+  max_prompt_length: 64
+  max_response_length: 64
+  corruption:
+    replace_ratio: 0.10
+    delete_ratio: 0.05
+    insert_ratio: 0.05
+    expand_ratio: 0.05
+    mask_ratio: 0.80
+    noise_vocab_size: 100
+    expand_prob: 0.10
+    insert_prob: 0.15
+    t_skew: 2.0
+    shortage_prob: 0.35
+
+inference:
+  max_iterations: 20
+  keep_threshold: 0.9
+  confidence_threshold: 0.0

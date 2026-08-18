@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DLLM Inference Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ── Header ── -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <span class="logo-text">DLLM <span class="logo-accent">Visualizer</span></span>
+      </div>
+      <div class="header-status">
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-text" id="statusText">Connecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- ── Left Panel: Controls ── -->
+    <aside class="panel panel-left">
+      <section class="card">
+        <h2 class="card-title">Generate</h2>
+
+        <div class="field">
+          <label class="label" for="promptInput">Prompt</label>
+          <textarea id="promptInput" class="textarea" rows="3" placeholder="Enter a prompt…">एक राजा था</textarea>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label class="label" for="maxIter">Max Iterations</label>
+            <input id="maxIter" class="input" type="number" value="20" min="1" max="50" />
+          </div>
+          <div class="field">
+            <label class="label" for="targetLen">Target Length <span class="label-hint">(blank = auto)</span></label>
+            <input id="targetLen" class="input" type="number" placeholder="auto" min="1" max="128" />
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label class="label" for="temperature">Temperature <span class="label-val" id="tempVal">1.0</span></label>
+            <input id="temperature" class="range" type="range" min="0.1" max="2.0" step="0.1" value="1.0" />
+          </div>
+          <div class="field">
+            <label class="label" for="topP">Top-p <span class="label-val" id="topPVal">0.9</span></label>
+            <input id="topP" class="range" type="range" min="0.1" max="1.0" step="0.05" value="0.9" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label" for="topK">Top-k <span class="label-val" id="topKVal">50</span></label>
+          <input id="topK" class="range" type="range" min="1" max="200" step="1" value="50" />
+        </div>
+
+        <button class="btn-generate" id="generateBtn" onclick="runGenerate()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          Generate
+        </button>
+      </section>
+
+      <!-- ── Step Navigator ── -->
+      <section class="card" id="navCard" style="display:none">
+        <h2 class="card-title">Steps</h2>
+        <div class="step-nav">
+          <button class="nav-btn" id="navFirst" onclick="gotoStep(0)" title="First">⏮</button>
+          <button class="nav-btn" id="navPrev"  onclick="prevStep()"  title="Previous">◀</button>
+          <div class="step-counter">
+            <span id="currentStepNum">0</span>
+            <span class="step-sep">/</span>
+            <span id="totalStepNum">0</span>
+          </div>
+          <button class="nav-btn" id="navNext"  onclick="nextStep()"  title="Next">▶</button>
+          <button class="nav-btn" id="navLast"  onclick="gotoStep(totalSteps-1)" title="Last">⏭</button>
+        </div>
+        <input id="stepSlider" class="range step-slider" type="range" min="0" value="0" oninput="gotoStep(+this.value)" />
+
+        <!-- Play controls -->
+        <div class="playback-controls">
+          <button class="btn-play" id="playBtn" onclick="togglePlay()">
+            <span id="playIcon">▶ Play</span>
+          </button>
+          <div class="field speed-field">
+            <label class="label">Speed</label>
+            <select id="playSpeed" class="select">
+              <option value="1200">Slow</option>
+              <option value="700" selected>Normal</option>
+              <option value="300">Fast</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Step tag counts bar -->
+        <div class="tag-bar-wrap" id="tagBar"></div>
+      </section>
+
+      <!-- ── Result ── -->
+      <section class="card" id="resultCard" style="display:none">
+        <h2 class="card-title">Final Output</h2>
+        <div class="result-block">
+          <div class="result-label">Response</div>
+          <div class="result-text" id="finalResponse">—</div>
+        </div>
+        <div class="result-block">
+          <div class="result-label">Full Canvas</div>
+          <div class="result-text result-text-sm" id="finalFull">—</div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ── Right Panel: Visualization ── -->
+    <section class="panel panel-right">
+
+      <!-- Canvas view -->
+      <div class="card canvas-card" id="canvasCard">
+        <div class="canvas-header">
+          <h2 class="card-title">Canvas View
+            <span class="step-badge" id="stepBadge">Step 0</span>
+          </h2>
+          <div class="canvas-legend">
+            <span class="legend-item" data-tag="KEEP">KEEP</span>
+            <span class="legend-item" data-tag="REPLACE">REPLACE</span>
+            <span class="legend-item" data-tag="DELETE">DELETE</span>
+            <span class="legend-item" data-tag="INSERT">INSERT</span>
+            <span class="legend-item" data-tag="EXPAND">EXPAND</span>
+            <span class="legend-item" data-tag="prompt">Prompt</span>
+            <span class="legend-item" data-tag="structural">Structural</span>
+          </div>
+        </div>
+        <div class="canvas-body" id="canvasBody">
+          <div class="empty-state">
+            <div class="empty-icon">⟨ ⟩</div>
+            <p>Run generation to see the canvas evolve</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Token detail panel (appears on hover/click) -->
+      <div class="card token-detail-card" id="tokenDetail" style="display:none">
+        <h2 class="card-title">Token Detail</h2>
+        <div class="detail-grid" id="detailGrid"></div>
+        <div class="prob-bars" id="probBars"></div>
+      </div>
+
+      <!-- Timeline heatmap -->
+      <div class="card timeline-card" id="timelineCard" style="display:none">
+        <h2 class="card-title">Iteration Timeline
+          <span class="timeline-hint">Each column = one step · Each row = a token position</span>
+        </h2>
+        <div class="timeline-wrap" id="timelineWrap"></div>
+      </div>
+
+      <!-- Convergence chart -->
+      <div class="card chart-card" id="chartCard" style="display:none">
+        <h2 class="card-title">Tag Distribution Over Steps</h2>
+        <canvas id="tagChart" height="140"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <!-- Spinner overlay -->
+  <div class="spinner-overlay" id="spinner" style="display:none">
+    <div class="spinner-box">
+      <div class="spinner-ring"></div>
+      <div class="spinner-label">Running inference…</div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
