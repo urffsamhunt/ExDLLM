@@ -20,6 +20,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
 from .dataset import build_labels
+from dllm.utils import JSONMetricsLogger
 
 
 class ARLMTrainer:
@@ -69,6 +70,7 @@ class ARLMTrainer:
         self.global_step = 0
         self.current_epoch = 0
         self.best_val_loss = float("inf")
+        self.metrics_logger = None
 
     def _setup_optimizer(self):
         """Initialize AdamW optimizer with proper weight-decay grouping."""
@@ -96,6 +98,7 @@ class ARLMTrainer:
         val_loader=None,
         save_dir: str = "./checkpoints_ar",
         log_fn: Optional[Callable] = None,
+        metrics_path: Optional[str] = "training_metrics.jsonl",
     ):
         """
         Main training loop.
@@ -105,9 +108,14 @@ class ARLMTrainer:
             val_loader: Optional DataLoader for validation.
             save_dir: Directory for saving checkpoints.
             log_fn: Optional callback for logging metrics (e.g., wandb.log).
+            metrics_path: Filename (or None to disable) for a JSONL metrics log
+                written into `save_dir`. Defaults to 'training_metrics.jsonl'.
         """
         os.makedirs(save_dir, exist_ok=True)
         self.model.train()
+
+        if metrics_path is not None:
+            self.metrics_logger = JSONMetricsLogger(os.path.join(save_dir, metrics_path))
 
         running_loss = 0.0
         accumulated_steps = 0
@@ -153,6 +161,8 @@ class ARLMTrainer:
                         }
                         if log_fn:
                             log_fn(metrics)
+                        if self.metrics_logger is not None:
+                            self.metrics_logger.log(metrics)
                         progress_bar.set_postfix({"loss": f"{avg_loss:.4f}", "lr": f"{lr:.2e}"})
                         running_loss = 0.0
 
@@ -162,6 +172,8 @@ class ARLMTrainer:
                         if log_fn:
                             log_fn({f"val_{k}": v for k, v in val_metrics.items()})
                             log_fn({"step": self.global_step})
+                        if self.metrics_logger is not None:
+                            self.metrics_logger.log({"step": self.global_step, **{f"val_{k}": v for k, v in val_metrics.items()}})
 
                         val_loss = val_metrics["total_loss"]
                         if val_loss < self.best_val_loss:
@@ -176,6 +188,10 @@ class ARLMTrainer:
                         self.save_checkpoint(os.path.join(save_dir, "resume.pt"))
 
         progress_bar.close()
+
+        if self.metrics_logger is not None:
+            self.metrics_logger.close()
+            self.metrics_logger = None
 
     # ── Evaluation ────────────────────────────────────────────────────
 

@@ -21,6 +21,8 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
+from .utils import JSONMetricsLogger
+
 
 class DLLMTrainer:
     """
@@ -87,6 +89,7 @@ class DLLMTrainer:
         self.global_step = 0
         self.current_epoch = 0
         self.best_val_loss = float("inf")
+        self.metrics_logger = None
 
     def _setup_optimizer(self):
         """Initialize AdamW optimizer with proper weight decay grouping."""
@@ -117,6 +120,7 @@ class DLLMTrainer:
         log_fn: Optional[Callable] = None,
         bleu_eval_fn: Optional[Callable[[], Dict[str, float]]] = None,
         bleu_every: int = 0,
+        metrics_path: Optional[str] = "training_metrics.jsonl",
     ):
         """
         Main training loop.
@@ -129,9 +133,14 @@ class DLLMTrainer:
             bleu_eval_fn: Optional callback returning {'bleu': ...} — called
                 every bleu_every steps (e.g., translation quality tracking).
             bleu_every: Evaluate BLEU every N optimizer steps (0 = disabled).
+            metrics_path: Filename (or None to disable) for a JSONL metrics log
+                written into `save_dir`. Defaults to 'training_metrics.jsonl'.
         """
         os.makedirs(save_dir, exist_ok=True)
         self.model.train()
+
+        if metrics_path is not None:
+            self.metrics_logger = JSONMetricsLogger(os.path.join(save_dir, metrics_path))
 
         running_tag_loss = 0.0
         running_gen_loss = 0.0
@@ -259,6 +268,9 @@ class DLLMTrainer:
                         if log_fn:
                             log_fn(metrics)
 
+                        if self.metrics_logger is not None:
+                            self.metrics_logger.log(metrics)
+
                         postfix = {
                             "tag": f"{avg_tag:.3f}",
                             "gen": f"{avg_gen:.3f}",
@@ -280,6 +292,9 @@ class DLLMTrainer:
                         if log_fn:
                             log_fn({f"val_{k}": v for k, v in val_metrics.items()})
                             log_fn({"step": self.global_step})
+
+                        if self.metrics_logger is not None:
+                            self.metrics_logger.log({"step": self.global_step, **{f"val_{k}": v for k, v in val_metrics.items()}})
 
                         # Save best model (only checkpoint kept — no periodic saves)
                         val_loss = val_metrics["total_loss"]
@@ -303,6 +318,10 @@ class DLLMTrainer:
                             log_fn({"step": self.global_step, **bleu_metrics})
 
         progress_bar.close()
+
+        if self.metrics_logger is not None:
+            self.metrics_logger.close()
+            self.metrics_logger = None
 
     # ── Scheduled Sampling ─────────────────────────────────────────────
 

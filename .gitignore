@@ -5,3 +5,4 @@ training.log
 __pycache__
 data
 graphify-out/cache/
+a.txt

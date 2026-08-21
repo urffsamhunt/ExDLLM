@@ -106,10 +106,18 @@ python scripts/translate.py \
 
 ### 4. Monolingual pretraining (English / Hindi)
 
-Before translation fine-tuning, the XLM‑RoBERTa backbone can be adapted to clean
-monolingual grammar with DLLM's **unconditional denoising** objective (no
-prompt/response pairing — the model learns to reverse length-changing
-corruption on raw text). Prepare Wikipedia data for either language:
+Before translation/ARLM benchmark fine-tuning, the XLM‑RoBERTa backbone is adapted
+on clean, monolingual text so it learns the DLLM **unconditional denoising**
+objective (reversing length-changing corruption on raw text) — no
+prompt/response pairing. The model thereby acquires the edit vocabulary
+(`KEEP`/`DELETE`/`REPLACE`/`INSERT`/`EXPAND`) and the parallel-denoising
+dynamics that masked-LM pretraining cannot express.
+
+#### Step 1 — Prepare the data
+
+`scripts/prepare_pretrain_data.py` streams the HuggingFace `wikimedia/wikipedia`
+dataset (already stripped of wiki markup) for a single language, applies light
+cleaning, and writes one cleaned text chunk per line:
 
 ```bash
 # English
@@ -119,12 +127,48 @@ python scripts/prepare_pretrain_data.py --lang en --max_docs 200000 --out data/p
 python scripts/prepare_pretrain_data.py --lang hi --max_docs 200000 --out data/pretrain_hi.txt
 ```
 
-Then train with the corresponding config:
+Cleaning applied on top of the HF preprocessing:
+
+- NFKC unicode normalization + whitespace collapse.
+- Drop section-heading boilerplate (`References`, `See also`, etc.).
+- Drop URL / template / code-fence residue.
+- Drop very short stub lines.
+- **Hindi only:** keep lines that are ≥70% Devanagari, so English / Hinglish /
+  Romanized text is excluded from Hindi grammar training. (This threshold is
+  the `devanagari_frac` value in the script's `LANG_DEFAULTS`; it is not exposed
+  as a CLI flag.)
+- Exact-line dedup (disable with `--no_dedup`).
+
+Key flags:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--lang` | *(required)* | `en` or `hi`. |
+| `--config` | `20231101.<lang>` | `wikimedia/wikipedia` snapshot; override if HF adds a newer date. |
+| `--split` | `train` | Dataset split to stream. |
+| `--max_docs` | `200000` | Max articles to stream (`None` = no cap). |
+| `--out` | *(required)* | Output plain-text file. |
+| `--no_dedup` | off | Disable exact-line dedup. |
+
+> **Verify `--config`**: Wikipedia snapshots are date-suffixed and can change;
+> check the live `wikimedia/wikipedia` dataset card for the current date string
+> (or any other valid language config) before running.
+
+#### Step 2 — Train
 
 ```bash
 python scripts/train.py --config configs/pretrain_en.yaml --save_dir ./checkpoints_pretrain_en
 python scripts/train.py --config configs/pretrain_hi.yaml --save_dir ./checkpoints_pretrain_hi
 ```
+
+The pretraining configs set `mode: unconditional` (no length-head supervision,
+`scheduled_sampling_prob: 0`), use the `xlm-roberta-base` backbone, and point
+`data.dataset_name` at the file written in Step 1. To keep the runs small/clean
+(per the "no very large datasets" preference), cap `--max_docs` rather than
+streaming full Wikipedia.
+
+After pretraining, load the checkpoint and continue with task fine-tuning
+(e.g. `configs/translation.yaml` for en↔hi).
 
 ---
 
@@ -167,6 +211,8 @@ The trainer (`dllm/trainer.py`) supports:
 - **BLEU evaluation**: For translation tasks, BLEU can be computed on a held‑out test set at regular intervals.
 
 **Configuration**: All hyperparameters are defined in YAML files (`configs/`). Adjust batch size, learning rate, corruption ratios, noise levels, etc.
+
+**Metrics logging**: During training, the trainer appends per-step metrics (loss components, learning rate) as newline-delimited JSON to `training_metrics.jsonl` inside the save directory. Validation metrics are logged with a `val_` prefix. This file is designed for plotting loss-vs-step/epoch curves; disable it by passing `metrics_path=None` to `trainer.train(...)`.
 
 ---
 

@@ -93,6 +93,19 @@
   },
   "nodes": [
     {
+      "id": "dllm_inference_dllminference",
+      "label": "DLLMInference",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "dllminference",
+      "source_file": "dllm/inference.py",
+      "source_location": "L43"
+    },
+    {
       "id": "dllm_model_dllm",
       "label": "DLLM",
       "_callable": true,
@@ -106,30 +119,30 @@
       "source_location": "L21"
     },
     {
-      "id": "scripts_baseline_ar_ardialoguedataset",
-      "label": "ARDialogueDataset",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "code",
-      "norm_label": "ardialoguedataset",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L33"
-    },
-    {
       "id": "arlm_model_arlm",
       "label": "ARLM",
       "_callable": true,
       "_callable_class": true,
       "_origin": "ast",
-      "community": 15,
+      "community": 10,
       "community_name": "ARLM",
       "file_type": "code",
       "norm_label": "arlm",
       "source_file": "arlm/model.py",
-      "source_location": "L30"
+      "source_location": "L24"
+    },
+    {
+      "id": "arlm_inference_arlminference",
+      "label": "ARLMInference",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "code",
+      "norm_label": "arlminference",
+      "source_file": "arlm/inference.py",
+      "source_location": "L24"
     },
     {
       "id": "arlm_tokenizer_arlmtokenizer",
@@ -142,7 +155,7 @@
       "file_type": "code",
       "norm_label": "arlmtokenizer",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L26"
+      "source_location": "L21"
     },
     {
       "id": "arlm_trainer_arlmtrainer",
@@ -155,7 +168,7 @@
       "file_type": "code",
       "norm_label": "arlmtrainer",
       "source_file": "arlm/trainer.py",
-      "source_location": "L26"
+      "source_location": "L25"
     },
     {
       "id": "dllm_dataset_dllmdataset",
@@ -171,19 +184,6 @@
       "source_location": "L33"
     },
     {
-      "id": "dllm_inference_dllminference",
-      "label": "DLLMInference",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "code",
-      "norm_label": "dllminference",
-      "source_file": "dllm/inference.py",
-      "source_location": "L43"
-    },
-    {
       "id": "arlm_dataset_arlmdataset",
       "label": "ARLMDataset",
       "_callable": true,
@@ -194,7 +194,7 @@
       "file_type": "code",
       "norm_label": "arlmdataset",
       "source_file": "arlm/dataset.py",
-      "source_location": "L26"
+      "source_location": "L25"
     },
     {
       "id": "dllm_trainer_dllmtrainer",
@@ -207,19 +207,6 @@
       "file_type": "code",
       "norm_label": "dllmtrainer",
       "source_file": "dllm/trainer.py",
-      "source_location": "L25"
-    },
-    {
-      "id": "arlm_inference_arlminference",
-      "label": "ARLMInference",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "ARLMInference",
-      "file_type": "code",
-      "norm_label": "arlminference",
-      "source_file": "arlm/inference.py",
       "source_location": "L25"
     },
     {
@@ -247,6 +234,91 @@
       "norm_label": "dllmtokenizer",
       "source_file": "dllm/tokenizer.py",
       "source_location": "L31"
+    },
+    {
+      "id": "scripts_baseline_ar_ardialoguedataset",
+      "label": "ARDialogueDataset",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "ardialoguedataset",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L33"
+    },
+    {
+      "id": "dllm_inference_dllminference_decode_canvas",
+      "label": "._decode_canvas()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "._decode_canvas()",
+      "source_file": "dllm/inference.py",
+      "source_location": "L439"
+    },
+    {
+      "id": "dllm_inference_dllminference_execute_edits",
+      "label": "._execute_edits()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "._execute_edits()",
+      "source_file": "dllm/inference.py",
+      "source_location": "L324"
+    },
+    {
+      "id": "dllm_inference_dllminference_extract_response",
+      "label": ".extract_response()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": ".extract_response()",
+      "source_file": "dllm/inference.py",
+      "source_location": "L459"
+    },
+    {
+      "id": "dllm_inference_dllminference_generate",
+      "label": ".generate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": ".generate()",
+      "source_file": "dllm/inference.py",
+      "source_location": "L70"
+    },
+    {
+      "id": "dllm_inference_dllminference_init",
+      "label": ".__init__()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": ".__init__()",
+      "source_file": "dllm/inference.py",
+      "source_location": "L53"
+    },
+    {
+      "id": "dllm_inference_dllminference_sample_tokens",
+      "label": "._sample_tokens()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "._sample_tokens()",
+      "source_file": "dllm/inference.py",
+      "source_location": "L297"
     },
     {
       "id": "dllm_model_dllm_compute_loss",
@@ -345,160 +417,232 @@
       "source_location": "L154"
     },
     {
-      "id": "scripts_baseline_ar_ardialoguedataset_getitem",
-      "label": ".__getitem__()",
+      "id": "dllm_model_load_dllm_state",
+      "label": "load_dllm_state()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "load_dllm_state()",
+      "source_file": "dllm/model.py",
+      "source_location": "L427"
+    },
+    {
+      "id": "scripts_generate_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "scripts/generate.py",
+      "source_location": "L53"
+    },
+    {
+      "id": "scripts_generate_parse_args",
+      "label": "parse_args()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "parse_args()",
+      "source_file": "scripts/generate.py",
+      "source_location": "L23"
+    },
+    {
+      "id": "scripts_translate_load_model",
+      "label": "load_model()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "load_model()",
+      "source_file": "scripts/translate.py",
+      "source_location": "L24"
+    },
+    {
+      "id": "scripts_translate_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "scripts/translate.py",
+      "source_location": "L52"
+    },
+    {
+      "id": "scripts_translate_translate",
+      "label": "translate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "translate()",
+      "source_file": "scripts/translate.py",
+      "source_location": "L48"
+    },
+    {
+      "id": "visualizer_app_generate",
+      "label": "generate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "generate()",
+      "source_file": "visualizer/app.py",
+      "source_location": "L77"
+    },
+    {
+      "id": "visualizer_app_index",
+      "label": "index()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "index()",
+      "source_file": "visualizer/app.py",
+      "source_location": "L72"
+    },
+    {
+      "id": "visualizer_app_load_model",
+      "label": "load_model()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "load_model()",
+      "source_file": "visualizer/app.py",
+      "source_location": "L31"
+    },
+    {
+      "id": "visualizer_app_parse_args",
+      "label": "parse_args()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "parse_args()",
+      "source_file": "visualizer/app.py",
+      "source_location": "L128"
+    },
+    {
+      "id": "visualizer_app_status",
+      "label": "status()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "status()",
+      "source_file": "visualizer/app.py",
+      "source_location": "L118"
+    },
+    {
+      "id": "arlm_model_arlm_compute_loss",
+      "label": ".compute_loss()",
       "_callable": true,
       "_origin": "ast",
       "community": 10,
-      "community_name": "baseline_ar.py",
+      "community_name": "ARLM",
       "file_type": "code",
-      "norm_label": ".__getitem__()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L51"
+      "norm_label": ".compute_loss()",
+      "source_file": "arlm/model.py",
+      "source_location": "L85"
     },
     {
-      "id": "scripts_baseline_ar_ardialoguedataset_init",
+      "id": "arlm_model_arlm_forward",
+      "label": ".forward()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "ARLM",
+      "file_type": "code",
+      "norm_label": ".forward()",
+      "source_file": "arlm/model.py",
+      "source_location": "L57"
+    },
+    {
+      "id": "arlm_model_arlm_get_param_groups",
+      "label": ".get_param_groups()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "ARLM",
+      "file_type": "code",
+      "norm_label": ".get_param_groups()",
+      "source_file": "arlm/model.py",
+      "source_location": "L109"
+    },
+    {
+      "id": "arlm_model_arlm_init",
       "label": ".__init__()",
       "_callable": true,
       "_origin": "ast",
       "community": 10,
-      "community_name": "baseline_ar.py",
+      "community_name": "ARLM",
       "file_type": "code",
       "norm_label": ".__init__()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L36"
+      "source_file": "arlm/model.py",
+      "source_location": "L33"
     },
     {
-      "id": "scripts_baseline_ar_ardialoguedataset_len",
-      "label": ".__len__()",
+      "id": "scripts_prepare_pretrain_data_clean_lines",
+      "label": "clean_lines()",
       "_callable": true,
       "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
+      "community": 12,
+      "community_name": "clean_lines",
       "file_type": "code",
-      "norm_label": ".__len__()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L48"
+      "norm_label": "clean_lines()",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L93"
     },
     {
-      "id": "scripts_baseline_ar_build_labels",
-      "label": "build_labels()",
+      "id": "scripts_prepare_pretrain_data_devanagari_fraction",
+      "label": "devanagari_fraction()",
       "_callable": true,
       "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
+      "community": 12,
+      "community_name": "clean_lines",
       "file_type": "code",
-      "norm_label": "build_labels()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L67"
+      "norm_label": "devanagari_fraction()",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L86"
     },
     {
-      "id": "scripts_baseline_ar_evaluate",
-      "label": "evaluate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "code",
-      "norm_label": "evaluate()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L77"
-    },
-    {
-      "id": "scripts_baseline_ar_generate",
-      "label": "generate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "code",
-      "norm_label": "generate()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L92"
-    },
-    {
-      "id": "scripts_baseline_ar_main",
+      "id": "scripts_prepare_pretrain_data_main",
       "label": "main()",
       "_callable": true,
       "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
+      "community": 12,
+      "community_name": "clean_lines",
       "file_type": "code",
       "norm_label": "main()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L120"
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L111"
     },
     {
-      "id": "scripts_baseline_ar_make_collate",
-      "label": "make_collate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "code",
-      "norm_label": "make_collate()",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L55"
-    },
-    {
-      "id": "dllm_inference_dllminference_decode_canvas",
-      "label": "._decode_canvas()",
+      "id": "scripts_prepare_pretrain_data_normalize_ws",
+      "label": "normalize_ws()",
       "_callable": true,
       "_origin": "ast",
       "community": 12,
-      "community_name": ".generate",
+      "community_name": "clean_lines",
       "file_type": "code",
-      "norm_label": "._decode_canvas()",
-      "source_file": "dllm/inference.py",
-      "source_location": "L439"
-    },
-    {
-      "id": "dllm_inference_dllminference_execute_edits",
-      "label": "._execute_edits()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
-      "file_type": "code",
-      "norm_label": "._execute_edits()",
-      "source_file": "dllm/inference.py",
-      "source_location": "L324"
-    },
-    {
-      "id": "dllm_inference_dllminference_extract_response",
-      "label": ".extract_response()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
-      "file_type": "code",
-      "norm_label": ".extract_response()",
-      "source_file": "dllm/inference.py",
-      "source_location": "L459"
-    },
-    {
-      "id": "dllm_inference_dllminference_generate",
-      "label": ".generate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
-      "file_type": "code",
-      "norm_label": ".generate()",
-      "source_file": "dllm/inference.py",
-      "source_location": "L70"
-    },
-    {
-      "id": "dllm_inference_dllminference_sample_tokens",
-      "label": "._sample_tokens()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
-      "file_type": "code",
-      "norm_label": "._sample_tokens()",
-      "source_file": "dllm/inference.py",
-      "source_location": "L297"
+      "norm_label": "normalize_ws()",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L80"
     },
     {
       "id": "dllm_utils_compute_edit_accuracy",
@@ -549,64 +693,52 @@
       "source_location": "L29"
     },
     {
-      "id": "arlm_model_arlm_compute_loss",
-      "label": ".compute_loss()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "code",
-      "norm_label": ".compute_loss()",
-      "source_file": "arlm/model.py",
-      "source_location": "L91"
-    },
-    {
-      "id": "arlm_model_arlm_forward",
-      "label": ".forward()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "code",
-      "norm_label": ".forward()",
-      "source_file": "arlm/model.py",
-      "source_location": "L63"
-    },
-    {
-      "id": "arlm_model_arlm_get_param_groups",
-      "label": ".get_param_groups()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "code",
-      "norm_label": ".get_param_groups()",
-      "source_file": "arlm/model.py",
-      "source_location": "L115"
-    },
-    {
-      "id": "arlm_model_arlm_init",
-      "label": ".__init__()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "code",
-      "norm_label": ".__init__()",
-      "source_file": "arlm/model.py",
-      "source_location": "L39"
-    },
-    {
       "id": "arlm_model_load_arlm_state",
       "label": "load_arlm_state()",
       "_callable": true,
       "_origin": "ast",
       "community": 15,
-      "community_name": "ARLM",
+      "community_name": "torch",
       "file_type": "code",
       "norm_label": "load_arlm_state()",
       "source_file": "arlm/model.py",
-      "source_location": "L137"
+      "source_location": "L131"
+    },
+    {
+      "id": "dllm_utils_set_seed",
+      "label": "set_seed()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "code",
+      "norm_label": "set_seed()",
+      "source_file": "dllm/utils.py",
+      "source_location": "L18"
+    },
+    {
+      "id": "dllm_utils_visualize_edits",
+      "label": "visualize_edits()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "code",
+      "norm_label": "visualize_edits()",
+      "source_file": "dllm/utils.py",
+      "source_location": "L110"
+    },
+    {
+      "id": "scripts_benchmark_count_params",
+      "label": "count_params()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "code",
+      "norm_label": "count_params()",
+      "source_file": "scripts/benchmark.py",
+      "source_location": "L109"
     },
     {
       "id": "scripts_benchmark_load_arlm",
@@ -614,11 +746,47 @@
       "_callable": true,
       "_origin": "ast",
       "community": 15,
-      "community_name": "ARLM",
+      "community_name": "torch",
       "file_type": "code",
       "norm_label": "load_arlm()",
       "source_file": "scripts/benchmark.py",
       "source_location": "L65"
+    },
+    {
+      "id": "scripts_benchmark_load_dllm",
+      "label": "load_dllm()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "code",
+      "norm_label": "load_dllm()",
+      "source_file": "scripts/benchmark.py",
+      "source_location": "L43"
+    },
+    {
+      "id": "scripts_benchmark_load_heldout_prompts",
+      "label": "load_heldout_prompts()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "code",
+      "norm_label": "load_heldout_prompts()",
+      "source_file": "scripts/benchmark.py",
+      "source_location": "L82"
+    },
+    {
+      "id": "scripts_benchmark_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "scripts/benchmark.py",
+      "source_location": "L113"
     },
     {
       "id": "scripts_generate_arlm_main",
@@ -626,7 +794,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 15,
-      "community_name": "ARLM",
+      "community_name": "torch",
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "scripts/generate_arlm.py",
@@ -638,107 +806,47 @@
       "_callable": true,
       "_origin": "ast",
       "community": 15,
-      "community_name": "ARLM",
+      "community_name": "torch",
       "file_type": "code",
       "norm_label": "parse_args()",
       "source_file": "scripts/generate_arlm.py",
       "source_location": "L28"
     },
     {
-      "id": "dllm_model_load_dllm_state",
-      "label": "load_dllm_state()",
+      "id": "arlm_tokenizer_arlmtokenizer_decode",
+      "label": ".decode()",
       "_callable": true,
       "_origin": "ast",
       "community": 16,
-      "community_name": "set_seed",
+      "community_name": ".decode",
       "file_type": "code",
-      "norm_label": "load_dllm_state()",
-      "source_file": "dllm/model.py",
-      "source_location": "L427"
+      "norm_label": ".decode()",
+      "source_file": "arlm/tokenizer.py",
+      "source_location": "L57"
     },
     {
-      "id": "dllm_utils_set_seed",
-      "label": "set_seed()",
+      "id": "arlm_inference_arlminference_extract_response",
+      "label": ".extract_response()",
       "_callable": true,
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
       "file_type": "code",
-      "norm_label": "set_seed()",
-      "source_file": "dllm/utils.py",
-      "source_location": "L18"
+      "norm_label": ".extract_response()",
+      "source_file": "arlm/inference.py",
+      "source_location": "L130"
     },
     {
-      "id": "dllm_utils_visualize_edits",
-      "label": "visualize_edits()",
+      "id": "arlm_inference_arlminference_init",
+      "label": ".__init__()",
       "_callable": true,
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
       "file_type": "code",
-      "norm_label": "visualize_edits()",
-      "source_file": "dllm/utils.py",
-      "source_location": "L110"
-    },
-    {
-      "id": "scripts_generate_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "scripts/generate.py",
-      "source_location": "L53"
-    },
-    {
-      "id": "scripts_generate_parse_args",
-      "label": "parse_args()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
-      "file_type": "code",
-      "norm_label": "parse_args()",
-      "source_file": "scripts/generate.py",
-      "source_location": "L23"
-    },
-    {
-      "id": "scripts_translate_load_model",
-      "label": "load_model()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
-      "file_type": "code",
-      "norm_label": "load_model()",
-      "source_file": "scripts/translate.py",
-      "source_location": "L24"
-    },
-    {
-      "id": "scripts_translate_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "scripts/translate.py",
-      "source_location": "L52"
-    },
-    {
-      "id": "scripts_translate_translate",
-      "label": "translate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
-      "file_type": "code",
-      "norm_label": "translate()",
-      "source_file": "scripts/translate.py",
-      "source_location": "L48"
+      "norm_label": ".__init__()",
+      "source_file": "arlm/inference.py",
+      "source_location": "L33"
     },
     {
       "id": "arlm_tokenizer_arlmtokenizer_call",
@@ -750,19 +858,7 @@
       "file_type": "code",
       "norm_label": ".__call__()",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L68"
-    },
-    {
-      "id": "arlm_tokenizer_arlmtokenizer_decode",
-      "label": ".decode()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 17,
-      "community_name": "ARLMTokenizer",
-      "file_type": "code",
-      "norm_label": ".decode()",
-      "source_file": "arlm/tokenizer.py",
-      "source_location": "L62"
+      "source_location": "L63"
     },
     {
       "id": "arlm_tokenizer_arlmtokenizer_encode",
@@ -774,7 +870,7 @@
       "file_type": "code",
       "norm_label": ".encode()",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L56"
+      "source_location": "L51"
     },
     {
       "id": "arlm_tokenizer_arlmtokenizer_init",
@@ -786,7 +882,7 @@
       "file_type": "code",
       "norm_label": ".__init__()",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L29"
+      "source_location": "L24"
     },
     {
       "id": "arlm_tokenizer_arlmtokenizer_repr",
@@ -798,7 +894,7 @@
       "file_type": "code",
       "norm_label": ".__repr__()",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L93"
+      "source_location": "L88"
     },
     {
       "id": "arlm_tokenizer_arlmtokenizer_tokenizer",
@@ -810,7 +906,7 @@
       "file_type": "code",
       "norm_label": ".tokenizer()",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L89"
+      "source_location": "L84"
     },
     {
       "id": "arlm_dataset_build_labels",
@@ -822,19 +918,55 @@
       "file_type": "code",
       "norm_label": "build_labels()",
       "source_file": "arlm/dataset.py",
-      "source_location": "L109"
+      "source_location": "L108"
+    },
+    {
+      "id": "arlm_trainer_arlmtrainer_evaluate",
+      "label": ".evaluate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "arlm/dataset.py",
+      "file_type": "code",
+      "norm_label": ".evaluate()",
+      "source_file": "arlm/trainer.py",
+      "source_location": "L183"
+    },
+    {
+      "id": "arlm_trainer_arlmtrainer_save_checkpoint",
+      "label": ".save_checkpoint()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "arlm/dataset.py",
+      "file_type": "code",
+      "norm_label": ".save_checkpoint()",
+      "source_file": "arlm/trainer.py",
+      "source_location": "L209"
+    },
+    {
+      "id": "arlm_trainer_arlmtrainer_train",
+      "label": ".train()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "arlm/dataset.py",
+      "file_type": "code",
+      "norm_label": ".train()",
+      "source_file": "arlm/trainer.py",
+      "source_location": "L93"
     },
     {
       "id": "arlm_dataset_make_collate",
       "label": "make_collate()",
       "_callable": true,
       "_origin": "ast",
-      "community": 18,
-      "community_name": "arlm/dataset.py",
+      "community": 19,
+      "community_name": "ARLMTrainer",
       "file_type": "code",
       "norm_label": "make_collate()",
       "source_file": "arlm/dataset.py",
-      "source_location": "L97"
+      "source_location": "L96"
     },
     {
       "id": "arlm_trainer_arlmtrainer_init",
@@ -846,7 +978,7 @@
       "file_type": "code",
       "norm_label": ".__init__()",
       "source_file": "arlm/trainer.py",
-      "source_location": "L35"
+      "source_location": "L34"
     },
     {
       "id": "arlm_trainer_arlmtrainer_load_checkpoint",
@@ -858,7 +990,7 @@
       "file_type": "code",
       "norm_label": ".load_checkpoint()",
       "source_file": "arlm/trainer.py",
-      "source_location": "L226"
+      "source_location": "L225"
     },
     {
       "id": "arlm_trainer_arlmtrainer_setup_optimizer",
@@ -870,7 +1002,7 @@
       "file_type": "code",
       "norm_label": "._setup_optimizer()",
       "source_file": "arlm/trainer.py",
-      "source_location": "L74"
+      "source_location": "L73"
     },
     {
       "id": "arlm_trainer_arlmtrainer_setup_scheduler",
@@ -882,7 +1014,7 @@
       "file_type": "code",
       "norm_label": "._setup_scheduler()",
       "source_file": "arlm/trainer.py",
-      "source_location": "L79"
+      "source_location": "L78"
     },
     {
       "id": "scripts_train_arlm_main",
@@ -933,6 +1065,18 @@
       "source_location": "L427"
     },
     {
+      "id": "dllm_dataset_dllmdataset_chunk_text",
+      "label": "._chunk_text()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "code",
+      "norm_label": "._chunk_text()",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L152"
+    },
+    {
       "id": "dllm_dataset_dllmdataset_dummy_item",
       "label": "._dummy_item()",
       "_callable": true,
@@ -943,6 +1087,18 @@
       "norm_label": "._dummy_item()",
       "source_file": "dllm/dataset.py",
       "source_location": "L413"
+    },
+    {
+      "id": "dllm_dataset_dllmdataset_extract_dialogue_pairs",
+      "label": "._extract_dialogue_pairs()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "code",
+      "norm_label": "._extract_dialogue_pairs()",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L184"
     },
     {
       "id": "dllm_dataset_dllmdataset_find_aligned_clean",
@@ -981,6 +1137,18 @@
       "source_location": "L242"
     },
     {
+      "id": "dllm_dataset_dllmdataset_init",
+      "label": ".__init__()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "code",
+      "norm_label": ".__init__()",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L41"
+    },
+    {
       "id": "dllm_dataset_dllmdataset_len",
       "label": ".__len__()",
       "_callable": true,
@@ -1003,6 +1171,30 @@
       "norm_label": ".length_weights()",
       "source_file": "dllm/dataset.py",
       "source_location": "L404"
+    },
+    {
+      "id": "dllm_dataset_dllmdataset_load_text_file",
+      "label": "._load_text_file()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "code",
+      "norm_label": "._load_text_file()",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L114"
+    },
+    {
+      "id": "dllm_dataset_dllmdataset_load_tiny_shakespeare",
+      "label": "._load_tiny_shakespeare()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "code",
+      "norm_label": "._load_tiny_shakespeare()",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L132"
     },
     {
       "id": "dllm_dataset_dllmdataset_pad_or_truncate",
@@ -1041,162 +1233,6 @@
       "source_location": "L386"
     },
     {
-      "id": "scripts_benchmark_count_params",
-      "label": "count_params()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "count_params()",
-      "source_file": "scripts/benchmark.py",
-      "source_location": "L109"
-    },
-    {
-      "id": "scripts_benchmark_load_dllm",
-      "label": "load_dllm()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "load_dllm()",
-      "source_file": "scripts/benchmark.py",
-      "source_location": "L43"
-    },
-    {
-      "id": "scripts_benchmark_load_heldout_prompts",
-      "label": "load_heldout_prompts()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "load_heldout_prompts()",
-      "source_file": "scripts/benchmark.py",
-      "source_location": "L82"
-    },
-    {
-      "id": "scripts_benchmark_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "scripts/benchmark.py",
-      "source_location": "L113"
-    },
-    {
-      "id": "dllm_dataset_dllmdataset_chunk_text",
-      "label": "._chunk_text()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "code",
-      "norm_label": "._chunk_text()",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L152"
-    },
-    {
-      "id": "dllm_dataset_dllmdataset_extract_dialogue_pairs",
-      "label": "._extract_dialogue_pairs()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "code",
-      "norm_label": "._extract_dialogue_pairs()",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L184"
-    },
-    {
-      "id": "dllm_dataset_dllmdataset_init",
-      "label": ".__init__()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "code",
-      "norm_label": ".__init__()",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L41"
-    },
-    {
-      "id": "dllm_dataset_dllmdataset_load_text_file",
-      "label": "._load_text_file()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "code",
-      "norm_label": "._load_text_file()",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L114"
-    },
-    {
-      "id": "dllm_dataset_dllmdataset_load_tiny_shakespeare",
-      "label": "._load_tiny_shakespeare()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "code",
-      "norm_label": "._load_tiny_shakespeare()",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L132"
-    },
-    {
-      "id": "dllm_bleu_eval_make_bleu_evaluator",
-      "label": "make_bleu_evaluator()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "code",
-      "norm_label": "make_bleu_evaluator()",
-      "source_file": "dllm/bleu_eval.py",
-      "source_location": "L16"
-    },
-    {
-      "id": "dllm_dataset_collate_fn",
-      "label": "collate_fn()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "code",
-      "norm_label": "collate_fn()",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L500"
-    },
-    {
-      "id": "scripts_train_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "scripts/train.py",
-      "source_location": "L48"
-    },
-    {
-      "id": "scripts_train_parse_args",
-      "label": "parse_args()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "code",
-      "norm_label": "parse_args()",
-      "source_file": "scripts/train.py",
-      "source_location": "L29"
-    },
-    {
       "id": "arlm_inference_arlminference_generate",
       "label": ".generate()",
       "_callable": true,
@@ -1206,7 +1242,7 @@
       "file_type": "code",
       "norm_label": ".generate()",
       "source_file": "arlm/inference.py",
-      "source_location": "L51"
+      "source_location": "L50"
     },
     {
       "id": "arlm_inference_arlminference_sample_filters",
@@ -1218,7 +1254,7 @@
       "file_type": "code",
       "norm_label": "._sample_filters()",
       "source_file": "arlm/inference.py",
-      "source_location": "L98"
+      "source_location": "L97"
     },
     {
       "id": "arlm_inference_arlminference_sample_tokens",
@@ -1230,31 +1266,7 @@
       "file_type": "code",
       "norm_label": "._sample_tokens()",
       "source_file": "arlm/inference.py",
-      "source_location": "L115"
-    },
-    {
-      "id": "dllm_inference_dllminference_init",
-      "label": ".__init__()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "code",
-      "norm_label": ".__init__()",
-      "source_file": "dllm/inference.py",
-      "source_location": "L53"
-    },
-    {
-      "id": "visualizer_app_load_model",
-      "label": "load_model()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "code",
-      "norm_label": "load_model()",
-      "source_file": "visualizer/app.py",
-      "source_location": "L31"
+      "source_location": "L114"
     },
     {
       "id": "arlm_dataset_arlmdataset_getitem",
@@ -1266,7 +1278,7 @@
       "file_type": "code",
       "norm_label": ".__getitem__()",
       "source_file": "arlm/dataset.py",
-      "source_location": "L93"
+      "source_location": "L92"
     },
     {
       "id": "arlm_dataset_arlmdataset_init",
@@ -1278,7 +1290,7 @@
       "file_type": "code",
       "norm_label": ".__init__()",
       "source_file": "arlm/dataset.py",
-      "source_location": "L41"
+      "source_location": "L40"
     },
     {
       "id": "arlm_dataset_arlmdataset_len",
@@ -1290,151 +1302,31 @@
       "file_type": "code",
       "norm_label": ".__len__()",
       "source_file": "arlm/dataset.py",
-      "source_location": "L90"
+      "source_location": "L89"
     },
     {
-      "id": "arlm_trainer_arlmtrainer_evaluate",
-      "label": ".evaluate()",
+      "id": "dllm_bleu_eval_make_bleu_evaluator",
+      "label": "make_bleu_evaluator()",
       "_callable": true,
       "_origin": "ast",
-      "community": 26,
-      "community_name": ".evaluate",
+      "community": 3,
+      "community_name": "DLLMTrainer",
       "file_type": "code",
-      "norm_label": ".evaluate()",
-      "source_file": "arlm/trainer.py",
-      "source_location": "L184"
+      "norm_label": "make_bleu_evaluator()",
+      "source_file": "dllm/bleu_eval.py",
+      "source_location": "L16"
     },
     {
-      "id": "arlm_trainer_arlmtrainer_save_checkpoint",
-      "label": ".save_checkpoint()",
+      "id": "dllm_dataset_collate_fn",
+      "label": "collate_fn()",
       "_callable": true,
       "_origin": "ast",
-      "community": 26,
-      "community_name": ".evaluate",
+      "community": 3,
+      "community_name": "DLLMTrainer",
       "file_type": "code",
-      "norm_label": ".save_checkpoint()",
-      "source_file": "arlm/trainer.py",
-      "source_location": "L210"
-    },
-    {
-      "id": "arlm_trainer_arlmtrainer_train",
-      "label": ".train()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 26,
-      "community_name": ".evaluate",
-      "file_type": "code",
-      "norm_label": ".train()",
-      "source_file": "arlm/trainer.py",
-      "source_location": "L94"
-    },
-    {
-      "id": "visualizer_app_generate",
-      "label": "generate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "app.py",
-      "file_type": "code",
-      "norm_label": "generate()",
-      "source_file": "visualizer/app.py",
-      "source_location": "L77"
-    },
-    {
-      "id": "visualizer_app_index",
-      "label": "index()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "app.py",
-      "file_type": "code",
-      "norm_label": "index()",
-      "source_file": "visualizer/app.py",
-      "source_location": "L72"
-    },
-    {
-      "id": "visualizer_app_parse_args",
-      "label": "parse_args()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "app.py",
-      "file_type": "code",
-      "norm_label": "parse_args()",
-      "source_file": "visualizer/app.py",
-      "source_location": "L128"
-    },
-    {
-      "id": "visualizer_app_status",
-      "label": "status()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "app.py",
-      "file_type": "code",
-      "norm_label": "status()",
-      "source_file": "visualizer/app.py",
-      "source_location": "L118"
-    },
-    {
-      "id": "dllm_corruptor_forwardcorruptor_corrupt_prompt_response",
-      "label": ".corrupt_prompt_response()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 28,
-      "community_name": "._get_random_noise_token",
-      "file_type": "code",
-      "norm_label": ".corrupt_prompt_response()",
-      "source_file": "dllm/corruptor.py",
-      "source_location": "L122"
-    },
-    {
-      "id": "dllm_corruptor_forwardcorruptor_corrupt_prompt_response_trajectory",
-      "label": ".corrupt_prompt_response_trajectory()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 28,
-      "community_name": "._get_random_noise_token",
-      "file_type": "code",
-      "norm_label": ".corrupt_prompt_response_trajectory()",
-      "source_file": "dllm/corruptor.py",
-      "source_location": "L249"
-    },
-    {
-      "id": "dllm_corruptor_forwardcorruptor_get_random_noise_token",
-      "label": "._get_random_noise_token()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 28,
-      "community_name": "._get_random_noise_token",
-      "file_type": "code",
-      "norm_label": "._get_random_noise_token()",
-      "source_file": "dllm/corruptor.py",
-      "source_location": "L83"
-    },
-    {
-      "id": "dllm_tokenizer_dllmtokenizer_call",
-      "label": ".__call__()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 29,
-      "community_name": ".decode",
-      "file_type": "code",
-      "norm_label": ".__call__()",
-      "source_file": "dllm/tokenizer.py",
-      "source_location": "L127"
-    },
-    {
-      "id": "dllm_tokenizer_dllmtokenizer_decode",
-      "label": ".decode()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 29,
-      "community_name": ".decode",
-      "file_type": "code",
-      "norm_label": ".decode()",
-      "source_file": "dllm/tokenizer.py",
-      "source_location": "L121"
+      "norm_label": "collate_fn()",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L500"
     },
     {
       "id": "dllm_trainer_dllmtrainer_evaluate",
@@ -1545,28 +1437,28 @@
       "source_location": "L112"
     },
     {
-      "id": "arlm_inference_arlminference_extract_response",
-      "label": ".extract_response()",
+      "id": "scripts_train_main",
+      "label": "main()",
       "_callable": true,
       "_origin": "ast",
-      "community": 30,
-      "community_name": "ARLMInference",
+      "community": 3,
+      "community_name": "DLLMTrainer",
       "file_type": "code",
-      "norm_label": ".extract_response()",
-      "source_file": "arlm/inference.py",
-      "source_location": "L131"
+      "norm_label": "main()",
+      "source_file": "scripts/train.py",
+      "source_location": "L48"
     },
     {
-      "id": "arlm_inference_arlminference_init",
-      "label": ".__init__()",
+      "id": "scripts_train_parse_args",
+      "label": "parse_args()",
       "_callable": true,
       "_origin": "ast",
-      "community": 30,
-      "community_name": "ARLMInference",
+      "community": 3,
+      "community_name": "DLLMTrainer",
       "file_type": "code",
-      "norm_label": ".__init__()",
-      "source_file": "arlm/inference.py",
-      "source_location": "L34"
+      "norm_label": "parse_args()",
+      "source_file": "scripts/train.py",
+      "source_location": "L29"
     },
     {
       "id": "dllm_corruptor_forwardcorruptor_align",
@@ -1665,6 +1557,42 @@
       "source_location": "L94"
     },
     {
+      "id": "dllm_corruptor_forwardcorruptor_corrupt_prompt_response",
+      "label": ".corrupt_prompt_response()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "code",
+      "norm_label": ".corrupt_prompt_response()",
+      "source_file": "dllm/corruptor.py",
+      "source_location": "L122"
+    },
+    {
+      "id": "dllm_corruptor_forwardcorruptor_corrupt_prompt_response_trajectory",
+      "label": ".corrupt_prompt_response_trajectory()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "code",
+      "norm_label": ".corrupt_prompt_response_trajectory()",
+      "source_file": "dllm/corruptor.py",
+      "source_location": "L249"
+    },
+    {
+      "id": "dllm_corruptor_forwardcorruptor_get_random_noise_token",
+      "label": "._get_random_noise_token()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "code",
+      "norm_label": "._get_random_noise_token()",
+      "source_file": "dllm/corruptor.py",
+      "source_location": "L83"
+    },
+    {
       "id": "dllm_corruptor_forwardcorruptor_ids_to_string",
       "label": "._ids_to_string()",
       "_callable": true,
@@ -1699,6 +1627,30 @@
       "norm_label": "._add_edit_tokens()",
       "source_file": "dllm/tokenizer.py",
       "source_location": "L73"
+    },
+    {
+      "id": "dllm_tokenizer_dllmtokenizer_call",
+      "label": ".__call__()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": ".__call__()",
+      "source_file": "dllm/tokenizer.py",
+      "source_location": "L127"
+    },
+    {
+      "id": "dllm_tokenizer_dllmtokenizer_decode",
+      "label": ".decode()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": ".decode()",
+      "source_file": "dllm/tokenizer.py",
+      "source_location": "L121"
     },
     {
       "id": "dllm_tokenizer_dllmtokenizer_delete_token",
@@ -1855,6 +1807,102 @@
       "norm_label": ".tokenizer()",
       "source_file": "dllm/tokenizer.py",
       "source_location": "L163"
+    },
+    {
+      "id": "scripts_baseline_ar_ardialoguedataset_getitem",
+      "label": ".__getitem__()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": ".__getitem__()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L51"
+    },
+    {
+      "id": "scripts_baseline_ar_ardialoguedataset_init",
+      "label": ".__init__()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": ".__init__()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L36"
+    },
+    {
+      "id": "scripts_baseline_ar_ardialoguedataset_len",
+      "label": ".__len__()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": ".__len__()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L48"
+    },
+    {
+      "id": "scripts_baseline_ar_build_labels",
+      "label": "build_labels()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "build_labels()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L67"
+    },
+    {
+      "id": "scripts_baseline_ar_evaluate",
+      "label": "evaluate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "evaluate()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L77"
+    },
+    {
+      "id": "scripts_baseline_ar_generate",
+      "label": "generate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "generate()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L92"
+    },
+    {
+      "id": "scripts_baseline_ar_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L120"
+    },
+    {
+      "id": "scripts_baseline_ar_make_collate",
+      "label": "make_collate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "make_collate()",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L55"
     },
     {
       "id": "visualizer_app_bindslider",
@@ -2457,6 +2505,72 @@
       "source_location": "L164"
     },
     {
+      "id": "dllm_bleu_eval",
+      "label": "bleu_eval.py",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "bleu_eval.py",
+      "source_file": "dllm/bleu_eval.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_inference",
+      "label": "dllm/inference.py",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "dllm/inference.py",
+      "source_file": "dllm/inference.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_inference_py_no_grad",
+      "label": "no_grad",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "no_grad",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "dllm_inference_py_tensor",
+      "label": "Tensor",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "tensor",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "dllm_model",
+      "label": "dllm/model.py",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "dllm/model.py",
+      "source_file": "dllm/model.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_model_py_module",
+      "label": "Module",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "module",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
       "id": "dllm_model_py_tensor",
       "label": "Tensor",
       "_origin": "ast",
@@ -2466,6 +2580,149 @@
       "norm_label": "tensor",
       "source_file": "",
       "source_location": ""
+    },
+    {
+      "id": "route",
+      "label": "route",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "route",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scripts_generate",
+      "label": "generate.py",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "generate.py",
+      "source_file": "scripts/generate.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scripts_translate",
+      "label": "translate.py",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "translate.py",
+      "source_file": "scripts/translate.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "visualizer_app_py_visualizer_app",
+      "label": "app.py",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "code",
+      "norm_label": "app.py",
+      "source_file": "visualizer/app.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_bleu_eval_rationale_1",
+      "label": "BLEU evaluation callback for the training loop. Translates a deterministic\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "bleu evaluation callback for the training loop. translates a deterministic...",
+      "source_file": "dllm/bleu_eval.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_inference_rationale_1",
+      "label": "DLLM Inference: Iterative denoising with full 5-op canvas evolution. Canvas\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "dllm inference: iterative denoising with full 5-op canvas evolution. canvas...",
+      "source_file": "dllm/inference.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_inference_rationale_304",
+      "label": "Top-k + nucleus sampling from generator logits. Returns one token per position.",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "top-k + nucleus sampling from generator logits. returns one token per position.",
+      "source_file": "dllm/inference.py",
+      "source_location": "L304"
+    },
+    {
+      "id": "dllm_inference_rationale_332",
+      "label": "Apply predicted edit operations to the canvas, enforcing positional rules: BOS\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "apply predicted edit operations to the canvas, enforcing positional rules: bos...",
+      "source_file": "dllm/inference.py",
+      "source_location": "L332"
+    },
+    {
+      "id": "dllm_inference_rationale_44",
+      "label": "Iterative denoising inference for the DLLM model. Usage: inference =\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "iterative denoising inference for the dllm model. usage: inference =...",
+      "source_file": "dllm/inference.py",
+      "source_location": "L44"
+    },
+    {
+      "id": "dllm_inference_rationale_440",
+      "label": "Decode canvas IDs to string. If clean=True, strips structural <MASK> tokens and\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "decode canvas ids to string. if clean=true, strips structural <mask> tokens and...",
+      "source_file": "dllm/inference.py",
+      "source_location": "L440"
+    },
+    {
+      "id": "dllm_inference_rationale_460",
+      "label": "Extract only the generated response tokens from the canvas (excluding prompt).",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "extract only the generated response tokens from the canvas (excluding prompt).",
+      "source_file": "dllm/inference.py",
+      "source_location": "L460"
+    },
+    {
+      "id": "dllm_inference_rationale_82",
+      "label": "Generate a response for the given prompt using iterative canvas refinement. The\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "generate a response for the given prompt using iterative canvas refinement. the...",
+      "source_file": "dllm/inference.py",
+      "source_location": "L82"
+    },
+    {
+      "id": "dllm_model_rationale_1",
+      "label": "DLLM Model: A two-headed bidirectional Transformer for edit-based diffusion.\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "dllm model: a two-headed bidirectional transformer for edit-based diffusion....",
+      "source_file": "dllm/model.py",
+      "source_location": "L1"
     },
     {
       "id": "dllm_model_rationale_155",
@@ -2556,6 +2813,17 @@
       "source_location": "L404"
     },
     {
+      "id": "dllm_model_rationale_428",
+      "label": "Load a DLLM state dict, tolerating older checkpoints: - checkpoints from the\u2026",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "load a dllm state dict, tolerating older checkpoints: - checkpoints from the...",
+      "source_file": "dllm/model.py",
+      "source_location": "L428"
+    },
+    {
       "id": "dllm_model_rationale_43",
       "label": "Args: tokenizer: DLLMTokenizer instance. backbone_name: HuggingFace model\u2026",
       "_origin": "ast",
@@ -2567,136 +2835,114 @@
       "source_location": "L43"
     },
     {
-      "id": "scripts_baseline_ar",
-      "label": "baseline_ar.py",
+      "id": "visualizer_app_rationale_1",
+      "label": "DLLM Visualizer \u2014 Flask backend. Usage: python visualizer/app.py --checkpoint\u2026",
       "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "code",
-      "norm_label": "baseline_ar.py",
-      "source_file": "scripts/baseline_ar.py",
+      "community": 0,
+      "community_name": "DLLM",
+      "file_type": "rationale",
+      "norm_label": "dllm visualizer \u2014 flask backend. usage: python visualizer/app.py --checkpoint...",
+      "source_file": "visualizer/app.py",
       "source_location": "L1"
     },
     {
-      "id": "scripts_baseline_ar_py_dataset",
-      "label": "Dataset",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "code",
-      "norm_label": "dataset",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "scripts_baseline_ar_py_no_grad",
-      "label": "no_grad",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "code",
-      "norm_label": "no_grad",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "scripts_baseline_ar_rationale_34",
-      "label": "Teacher-forced (prompt + response) sequences extracted from dialogue pairs.",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "rationale",
-      "norm_label": "teacher-forced (prompt + response) sequences extracted from dialogue pairs.",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L34"
-    },
-    {
-      "id": "scripts_baseline_ar_rationale_68",
-      "label": "Shifted next-token labels; padding and the final position are ignored.",
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "baseline_ar.py",
-      "file_type": "rationale",
-      "norm_label": "shifted next-token labels; padding and the final position are ignored.",
-      "source_file": "scripts/baseline_ar.py",
-      "source_location": "L68"
-    },
-    {
-      "id": "dllm_inference_py_no_grad",
-      "label": "no_grad",
-      "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
-      "file_type": "code",
-      "norm_label": "no_grad",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "dllm_inference_py_tensor",
+      "id": "arlm_model_py_tensor",
       "label": "Tensor",
       "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
+      "community": 10,
+      "community_name": "ARLM",
       "file_type": "code",
       "norm_label": "tensor",
       "source_file": "",
       "source_location": ""
     },
     {
-      "id": "dllm_inference_rationale_304",
-      "label": "Top-k + nucleus sampling from generator logits. Returns one token per position.",
+      "id": "arlm_model_rationale_110",
+      "label": "Return parameter groups with weight decay applied only to weights (not biases\u2026",
       "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
+      "community": 10,
+      "community_name": "ARLM",
       "file_type": "rationale",
-      "norm_label": "top-k + nucleus sampling from generator logits. returns one token per position.",
-      "source_file": "dllm/inference.py",
-      "source_location": "L304"
+      "norm_label": "return parameter groups with weight decay applied only to weights (not biases...",
+      "source_file": "arlm/model.py",
+      "source_location": "L110"
     },
     {
-      "id": "dllm_inference_rationale_332",
-      "label": "Apply predicted edit operations to the canvas, enforcing positional rules: BOS\u2026",
+      "id": "arlm_model_rationale_25",
+      "label": "Autoregressive language model wrapper. Usage: model = ARLM(\"roberta-base\") loss\u2026",
       "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
+      "community": 10,
+      "community_name": "ARLM",
       "file_type": "rationale",
-      "norm_label": "apply predicted edit operations to the canvas, enforcing positional rules: bos...",
-      "source_file": "dllm/inference.py",
-      "source_location": "L332"
+      "norm_label": "autoregressive language model wrapper. usage: model = arlm(\"roberta-base\") loss...",
+      "source_file": "arlm/model.py",
+      "source_location": "L25"
     },
     {
-      "id": "dllm_inference_rationale_440",
-      "label": "Decode canvas IDs to string. If clean=True, strips structural <MASK> tokens and\u2026",
+      "id": "arlm_model_rationale_34",
+      "label": "Args: tokenizer: ARLMTokenizer instance. backbone_name: HuggingFace causal-LM\u2026",
       "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
+      "community": 10,
+      "community_name": "ARLM",
       "file_type": "rationale",
-      "norm_label": "decode canvas ids to string. if clean=true, strips structural <mask> tokens and...",
-      "source_file": "dllm/inference.py",
-      "source_location": "L440"
+      "norm_label": "args: tokenizer: arlmtokenizer instance. backbone_name: huggingface causal-lm...",
+      "source_file": "arlm/model.py",
+      "source_location": "L34"
     },
     {
-      "id": "dllm_inference_rationale_460",
-      "label": "Extract only the generated response tokens from the canvas (excluding prompt).",
+      "id": "arlm_model_rationale_63",
+      "label": "Standard causal-LM forward pass. Args: input_ids: Token IDs. attention_mask:\u2026",
       "_origin": "ast",
-      "community": 12,
-      "community_name": ".generate",
+      "community": 10,
+      "community_name": "ARLM",
       "file_type": "rationale",
-      "norm_label": "extract only the generated response tokens from the canvas (excluding prompt).",
-      "source_file": "dllm/inference.py",
-      "source_location": "L460"
+      "norm_label": "standard causal-lm forward pass. args: input_ids: token ids. attention_mask:...",
+      "source_file": "arlm/model.py",
+      "source_location": "L63"
     },
     {
-      "id": "dllm_inference_rationale_82",
-      "label": "Generate a response for the given prompt using iterative canvas refinement. The\u2026",
+      "id": "arlm_model_rationale_91",
+      "label": "Compute the next-token cross-entropy loss. Returns: (loss, loss_dict) where\u2026",
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "ARLM",
+      "file_type": "rationale",
+      "norm_label": "compute the next-token cross-entropy loss. returns: (loss, loss_dict) where...",
+      "source_file": "arlm/model.py",
+      "source_location": "L91"
+    },
+    {
+      "id": "scripts_prepare_pretrain_data",
+      "label": "prepare_pretrain_data.py",
       "_origin": "ast",
       "community": 12,
-      "community_name": ".generate",
+      "community_name": "clean_lines",
+      "file_type": "code",
+      "norm_label": "prepare_pretrain_data.py",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scripts_prepare_pretrain_data_rationale_81",
+      "label": "NFKC normalize + collapse all whitespace runs.",
+      "_origin": "ast",
+      "community": 12,
+      "community_name": "clean_lines",
       "file_type": "rationale",
-      "norm_label": "generate a response for the given prompt using iterative canvas refinement. the...",
-      "source_file": "dllm/inference.py",
-      "source_location": "L82"
+      "norm_label": "nfkc normalize + collapse all whitespace runs.",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L81"
+    },
+    {
+      "id": "scripts_prepare_pretrain_data_rationale_94",
+      "label": "Split article text into cleaned, content-bearing lines.",
+      "_origin": "ast",
+      "community": 12,
+      "community_name": "clean_lines",
+      "file_type": "rationale",
+      "norm_label": "split article text into cleaned, content-bearing lines.",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L94"
     },
     {
       "id": "dllm_utils_py_tensor",
@@ -2769,7 +3015,7 @@
       "label": "arlm/model.py",
       "_origin": "ast",
       "community": 15,
-      "community_name": "ARLM",
+      "community_name": "torch",
       "file_type": "code",
       "norm_label": "arlm/model.py",
       "source_file": "arlm/model.py",
@@ -2780,117 +3026,7 @@
       "label": "Module",
       "_origin": "ast",
       "community": 15,
-      "community_name": "ARLM",
-      "file_type": "code",
-      "norm_label": "module",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "arlm_model_py_tensor",
-      "label": "Tensor",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "code",
-      "norm_label": "tensor",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "scripts_generate_arlm",
-      "label": "generate_arlm.py",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "code",
-      "norm_label": "generate_arlm.py",
-      "source_file": "scripts/generate_arlm.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "arlm_model_rationale_1",
-      "label": "ARLM Model: standard autoregressive language model. This is a thin wrapper\u2026",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "rationale",
-      "norm_label": "arlm model: standard autoregressive language model. this is a thin wrapper...",
-      "source_file": "arlm/model.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "arlm_model_rationale_116",
-      "label": "Return parameter groups with weight decay applied only to weights (not biases\u2026",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "rationale",
-      "norm_label": "return parameter groups with weight decay applied only to weights (not biases...",
-      "source_file": "arlm/model.py",
-      "source_location": "L116"
-    },
-    {
-      "id": "arlm_model_rationale_138",
-      "label": "Load an ARLM state dict, unwrapping DataParallel if present. Returns a message\u2026",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "rationale",
-      "norm_label": "load an arlm state dict, unwrapping dataparallel if present. returns a message...",
-      "source_file": "arlm/model.py",
-      "source_location": "L138"
-    },
-    {
-      "id": "arlm_model_rationale_31",
-      "label": "Autoregressive language model wrapper. Usage: model = ARLM(\"roberta-base\") loss\u2026",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "rationale",
-      "norm_label": "autoregressive language model wrapper. usage: model = arlm(\"roberta-base\") loss...",
-      "source_file": "arlm/model.py",
-      "source_location": "L31"
-    },
-    {
-      "id": "arlm_model_rationale_40",
-      "label": "Args: tokenizer: ARLMTokenizer instance. backbone_name: HuggingFace causal-LM\u2026",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "rationale",
-      "norm_label": "args: tokenizer: arlmtokenizer instance. backbone_name: huggingface causal-lm...",
-      "source_file": "arlm/model.py",
-      "source_location": "L40"
-    },
-    {
-      "id": "arlm_model_rationale_69",
-      "label": "Standard causal-LM forward pass. Args: input_ids: Token IDs. attention_mask:\u2026",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "rationale",
-      "norm_label": "standard causal-lm forward pass. args: input_ids: token ids. attention_mask:...",
-      "source_file": "arlm/model.py",
-      "source_location": "L69"
-    },
-    {
-      "id": "arlm_model_rationale_97",
-      "label": "Compute the next-token cross-entropy loss. Returns: (loss, loss_dict) where\u2026",
-      "_origin": "ast",
-      "community": 15,
-      "community_name": "ARLM",
-      "file_type": "rationale",
-      "norm_label": "compute the next-token cross-entropy loss. returns: (loss, loss_dict) where...",
-      "source_file": "arlm/model.py",
-      "source_location": "L97"
-    },
-    {
-      "id": "dllm_model_py_module",
-      "label": "Module",
-      "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community_name": "torch",
       "file_type": "code",
       "norm_label": "module",
       "source_file": "",
@@ -2900,52 +3036,74 @@
       "id": "dllm_utils",
       "label": "utils.py",
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 15,
+      "community_name": "torch",
       "file_type": "code",
       "norm_label": "utils.py",
       "source_file": "dllm/utils.py",
       "source_location": "L1"
     },
     {
-      "id": "scripts_generate",
-      "label": "generate.py",
+      "id": "scripts_benchmark",
+      "label": "benchmark.py",
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 15,
+      "community_name": "torch",
       "file_type": "code",
-      "norm_label": "generate.py",
-      "source_file": "scripts/generate.py",
+      "norm_label": "benchmark.py",
+      "source_file": "scripts/benchmark.py",
       "source_location": "L1"
     },
     {
-      "id": "scripts_translate",
-      "label": "translate.py",
+      "id": "scripts_generate_arlm",
+      "label": "generate_arlm.py",
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 15,
+      "community_name": "torch",
       "file_type": "code",
-      "norm_label": "translate.py",
-      "source_file": "scripts/translate.py",
+      "norm_label": "generate_arlm.py",
+      "source_file": "scripts/generate_arlm.py",
       "source_location": "L1"
     },
     {
-      "id": "dllm_model_rationale_428",
-      "label": "Load a DLLM state dict, tolerating older checkpoints: - checkpoints from the\u2026",
+      "id": "torch",
+      "label": "torch",
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "code",
+      "norm_label": "torch",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "arlm_model_rationale_1",
+      "label": "ARLM Model: standard autoregressive language model. This is a thin wrapper\u2026",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
       "file_type": "rationale",
-      "norm_label": "load a dllm state dict, tolerating older checkpoints: - checkpoints from the...",
-      "source_file": "dllm/model.py",
-      "source_location": "L428"
+      "norm_label": "arlm model: standard autoregressive language model. this is a thin wrapper...",
+      "source_file": "arlm/model.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "arlm_model_rationale_132",
+      "label": "Load an ARLM state dict, unwrapping DataParallel if present. Returns a message\u2026",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "rationale",
+      "norm_label": "load an arlm state dict, unwrapping dataparallel if present. returns a message...",
+      "source_file": "arlm/model.py",
+      "source_location": "L132"
     },
     {
       "id": "dllm_utils_rationale_1",
       "label": "DLLM Utilities: Helper functions for tensor manipulation, logging, etc.\u2026",
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 15,
+      "community_name": "torch",
       "file_type": "rationale",
       "norm_label": "dllm utilities: helper functions for tensor manipulation, logging, etc....",
       "source_file": "dllm/utils.py",
@@ -2955,8 +3113,8 @@
       "id": "dllm_utils_rationale_116",
       "label": "Create a human-readable visualization of the edit operations. Returns a multi-\u2026",
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 15,
+      "community_name": "torch",
       "file_type": "rationale",
       "norm_label": "create a human-readable visualization of the edit operations. returns a multi-...",
       "source_file": "dllm/utils.py",
@@ -2966,23 +3124,78 @@
       "id": "dllm_utils_rationale_19",
       "label": "Set random seed across torch, numpy, and Python random.",
       "_origin": "ast",
-      "community": 16,
-      "community_name": "set_seed",
+      "community": 15,
+      "community_name": "torch",
       "file_type": "rationale",
       "norm_label": "set random seed across torch, numpy, and python random.",
       "source_file": "dllm/utils.py",
       "source_location": "L19"
     },
     {
+      "id": "scripts_benchmark_rationale_83",
+      "label": "Load a held-out set of (prompt, reference) dialogue pairs.",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "torch",
+      "file_type": "rationale",
+      "norm_label": "load a held-out set of (prompt, reference) dialogue pairs.",
+      "source_file": "scripts/benchmark.py",
+      "source_location": "L83"
+    },
+    {
       "id": "arlm_tokenizer_py_tensor",
       "label": "Tensor",
       "_origin": "ast",
-      "community": 17,
-      "community_name": "ARLMTokenizer",
+      "community": 16,
+      "community_name": ".decode",
       "file_type": "code",
       "norm_label": "tensor",
       "source_file": "",
       "source_location": ""
+    },
+    {
+      "id": "arlm_tokenizer_rationale_58",
+      "label": "Decode token IDs back to a string.",
+      "_origin": "ast",
+      "community": 16,
+      "community_name": ".decode",
+      "file_type": "rationale",
+      "norm_label": "decode token ids back to a string.",
+      "source_file": "arlm/tokenizer.py",
+      "source_location": "L58"
+    },
+    {
+      "id": "arlm_inference",
+      "label": "arlm/inference.py",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "code",
+      "norm_label": "arlm/inference.py",
+      "source_file": "arlm/inference.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "arlm_init",
+      "label": "arlm/__init__.py",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "code",
+      "norm_label": "arlm/__init__.py",
+      "source_file": "arlm/__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "arlm_tokenizer",
+      "label": "arlm/tokenizer.py",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "code",
+      "norm_label": "arlm/tokenizer.py",
+      "source_file": "arlm/tokenizer.py",
+      "source_location": "L1"
     },
     {
       "id": "pretrainedtokenizer",
@@ -2996,7 +3209,51 @@
       "source_location": ""
     },
     {
-      "id": "arlm_tokenizer_rationale_27",
+      "id": "arlm_inference_rationale_1",
+      "label": "ARLM Inference: standard autoregressive (left-to-right) generation. The public\u2026",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "arlm inference: standard autoregressive (left-to-right) generation. the public...",
+      "source_file": "arlm/inference.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "arlm_inference_rationale_131",
+      "label": "Extract the newly generated portion of `full_text` (the continuation after the\u2026",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "extract the newly generated portion of `full_text` (the continuation after the...",
+      "source_file": "arlm/inference.py",
+      "source_location": "L131"
+    },
+    {
+      "id": "arlm_inference_rationale_25",
+      "label": "Autoregressive sampling for the ARLM model. Usage: inference =\u2026",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "autoregressive sampling for the arlm model. usage: inference =...",
+      "source_file": "arlm/inference.py",
+      "source_location": "L25"
+    },
+    {
+      "id": "arlm_tokenizer_rationale_1",
+      "label": "ARLM Tokenizer: thin wrapper around a HuggingFace causal LM tokenizer. Unlike\u2026",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "ARLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "arlm tokenizer: thin wrapper around a huggingface causal lm tokenizer. unlike...",
+      "source_file": "arlm/tokenizer.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "arlm_tokenizer_rationale_22",
       "label": "Wrap a HuggingFace causal-LM tokenizer with a DLLM-compatible surface.",
       "_origin": "ast",
       "community": 17,
@@ -3004,10 +3261,10 @@
       "file_type": "rationale",
       "norm_label": "wrap a huggingface causal-lm tokenizer with a dllm-compatible surface.",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L27"
+      "source_location": "L22"
     },
     {
-      "id": "arlm_tokenizer_rationale_30",
+      "id": "arlm_tokenizer_rationale_25",
       "label": "Args: base_model: HuggingFace model identifier for the base tokenizer.\u2026",
       "_origin": "ast",
       "community": 17,
@@ -3015,10 +3272,10 @@
       "file_type": "rationale",
       "norm_label": "args: base_model: huggingface model identifier for the base tokenizer....",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L30"
+      "source_location": "L25"
     },
     {
-      "id": "arlm_tokenizer_rationale_57",
+      "id": "arlm_tokenizer_rationale_52",
       "label": "Encode a text string into token IDs (no padding/truncation by default).",
       "_origin": "ast",
       "community": 17,
@@ -3026,21 +3283,10 @@
       "file_type": "rationale",
       "norm_label": "encode a text string into token ids (no padding/truncation by default).",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L57"
+      "source_location": "L52"
     },
     {
-      "id": "arlm_tokenizer_rationale_63",
-      "label": "Decode token IDs back to a string.",
-      "_origin": "ast",
-      "community": 17,
-      "community_name": "ARLMTokenizer",
-      "file_type": "rationale",
-      "norm_label": "decode token ids back to a string.",
-      "source_file": "arlm/tokenizer.py",
-      "source_location": "L63"
-    },
-    {
-      "id": "arlm_tokenizer_rationale_76",
+      "id": "arlm_tokenizer_rationale_71",
       "label": "Tokenize text(s) with padding and truncation.",
       "_origin": "ast",
       "community": 17,
@@ -3048,10 +3294,10 @@
       "file_type": "rationale",
       "norm_label": "tokenize text(s) with padding and truncation.",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L76"
+      "source_location": "L71"
     },
     {
-      "id": "arlm_tokenizer_rationale_90",
+      "id": "arlm_tokenizer_rationale_85",
       "label": "Access the underlying HuggingFace tokenizer.",
       "_origin": "ast",
       "community": 17,
@@ -3059,7 +3305,7 @@
       "file_type": "rationale",
       "norm_label": "access the underlying huggingface tokenizer.",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L90"
+      "source_location": "L85"
     },
     {
       "id": "arlm_dataset",
@@ -3070,39 +3316,6 @@
       "file_type": "code",
       "norm_label": "arlm/dataset.py",
       "source_file": "arlm/dataset.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "arlm_inference",
-      "label": "arlm/inference.py",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "arlm/dataset.py",
-      "file_type": "code",
-      "norm_label": "arlm/inference.py",
-      "source_file": "arlm/inference.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "arlm_init",
-      "label": "arlm/__init__.py",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "arlm/dataset.py",
-      "file_type": "code",
-      "norm_label": "arlm/__init__.py",
-      "source_file": "arlm/__init__.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "arlm_tokenizer",
-      "label": "arlm/tokenizer.py",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "arlm/dataset.py",
-      "file_type": "code",
-      "norm_label": "arlm/tokenizer.py",
-      "source_file": "arlm/tokenizer.py",
       "source_location": "L1"
     },
     {
@@ -3117,6 +3330,17 @@
       "source_location": "L1"
     },
     {
+      "id": "arlm_trainer_py_no_grad",
+      "label": "no_grad",
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "arlm/dataset.py",
+      "file_type": "code",
+      "norm_label": "no_grad",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
       "id": "arlm_dataset_rationale_1",
       "label": "ARLM Dataset: teacher-forced (prompt + response) sequences for an\u2026",
       "_origin": "ast",
@@ -3128,7 +3352,7 @@
       "source_location": "L1"
     },
     {
-      "id": "arlm_dataset_rationale_114",
+      "id": "arlm_dataset_rationale_113",
       "label": "Build shifted next-token labels for teacher forcing. The label at position i is\u2026",
       "_origin": "ast",
       "community": 18,
@@ -3136,40 +3360,7 @@
       "file_type": "rationale",
       "norm_label": "build shifted next-token labels for teacher forcing. the label at position i is...",
       "source_file": "arlm/dataset.py",
-      "source_location": "L114"
-    },
-    {
-      "id": "arlm_dataset_rationale_98",
-      "label": "Return a collate function that pads a batch to the longest sequence.",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "arlm/dataset.py",
-      "file_type": "rationale",
-      "norm_label": "return a collate function that pads a batch to the longest sequence.",
-      "source_file": "arlm/dataset.py",
-      "source_location": "L98"
-    },
-    {
-      "id": "arlm_inference_rationale_1",
-      "label": "ARLM Inference: standard autoregressive (left-to-right) generation. The public\u2026",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "arlm/dataset.py",
-      "file_type": "rationale",
-      "norm_label": "arlm inference: standard autoregressive (left-to-right) generation. the public...",
-      "source_file": "arlm/inference.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "arlm_tokenizer_rationale_1",
-      "label": "ARLM Tokenizer: thin wrapper around a HuggingFace causal LM tokenizer. Unlike\u2026",
-      "_origin": "ast",
-      "community": 18,
-      "community_name": "arlm/dataset.py",
-      "file_type": "rationale",
-      "norm_label": "arlm tokenizer: thin wrapper around a huggingface causal lm tokenizer. unlike...",
-      "source_file": "arlm/tokenizer.py",
-      "source_location": "L1"
+      "source_location": "L113"
     },
     {
       "id": "arlm_trainer_rationale_1",
@@ -3181,6 +3372,39 @@
       "norm_label": "arlm trainer: standard teacher-forced autoregressive training loop. the...",
       "source_file": "arlm/trainer.py",
       "source_location": "L1"
+    },
+    {
+      "id": "arlm_trainer_rationale_100",
+      "label": "Main training loop. Args: train_loader: DataLoader yielding {'input_ids',\u2026",
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "arlm/dataset.py",
+      "file_type": "rationale",
+      "norm_label": "main training loop. args: train_loader: dataloader yielding {'input_ids',...",
+      "source_file": "arlm/trainer.py",
+      "source_location": "L100"
+    },
+    {
+      "id": "arlm_trainer_rationale_184",
+      "label": "Run evaluation on the validation set. Returns averaged metrics.",
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "arlm/dataset.py",
+      "file_type": "rationale",
+      "norm_label": "run evaluation on the validation set. returns averaged metrics.",
+      "source_file": "arlm/trainer.py",
+      "source_location": "L184"
+    },
+    {
+      "id": "arlm_trainer_rationale_210",
+      "label": "Save model, optimizer, and training state.",
+      "_origin": "ast",
+      "community": 18,
+      "community_name": "arlm/dataset.py",
+      "file_type": "rationale",
+      "norm_label": "save model, optimizer, and training state.",
+      "source_file": "arlm/trainer.py",
+      "source_location": "L210"
     },
     {
       "id": "arlm_trainer_py_module",
@@ -3205,7 +3429,18 @@
       "source_location": "L1"
     },
     {
-      "id": "arlm_trainer_rationale_227",
+      "id": "arlm_dataset_rationale_97",
+      "label": "Return a collate function that pads a batch to the longest sequence.",
+      "_origin": "ast",
+      "community": 19,
+      "community_name": "ARLMTrainer",
+      "file_type": "rationale",
+      "norm_label": "return a collate function that pads a batch to the longest sequence.",
+      "source_file": "arlm/dataset.py",
+      "source_location": "L97"
+    },
+    {
+      "id": "arlm_trainer_rationale_226",
       "label": "Load model, optimizer, and training state from checkpoint.",
       "_origin": "ast",
       "community": 19,
@@ -3213,10 +3448,10 @@
       "file_type": "rationale",
       "norm_label": "load model, optimizer, and training state from checkpoint.",
       "source_file": "arlm/trainer.py",
-      "source_location": "L227"
+      "source_location": "L226"
     },
     {
-      "id": "arlm_trainer_rationale_27",
+      "id": "arlm_trainer_rationale_26",
       "label": "Trainer for the autoregressive language model. Usage: trainer =\u2026",
       "_origin": "ast",
       "community": 19,
@@ -3224,10 +3459,10 @@
       "file_type": "rationale",
       "norm_label": "trainer for the autoregressive language model. usage: trainer =...",
       "source_file": "arlm/trainer.py",
-      "source_location": "L27"
+      "source_location": "L26"
     },
     {
-      "id": "arlm_trainer_rationale_75",
+      "id": "arlm_trainer_rationale_74",
       "label": "Initialize AdamW optimizer with proper weight-decay grouping.",
       "_origin": "ast",
       "community": 19,
@@ -3235,10 +3470,10 @@
       "file_type": "rationale",
       "norm_label": "initialize adamw optimizer with proper weight-decay grouping.",
       "source_file": "arlm/trainer.py",
-      "source_location": "L75"
+      "source_location": "L74"
     },
     {
-      "id": "arlm_trainer_rationale_80",
+      "id": "arlm_trainer_rationale_79",
       "label": "Linear warmup followed by linear decay (identical to DLLM).",
       "_origin": "ast",
       "community": 19,
@@ -3246,7 +3481,7 @@
       "file_type": "rationale",
       "norm_label": "linear warmup followed by linear decay (identical to dllm).",
       "source_file": "arlm/trainer.py",
-      "source_location": "L80"
+      "source_location": "L79"
     },
     {
       "id": "dllm_dataset_py_dataset",
@@ -3269,6 +3504,50 @@
       "norm_label": "tensor",
       "source_file": "",
       "source_location": ""
+    },
+    {
+      "id": "dllm_dataset_rationale_115",
+      "label": "Load text from a local file and parse chunks or dialogue pairs.",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "rationale",
+      "norm_label": "load text from a local file and parse chunks or dialogue pairs.",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L115"
+    },
+    {
+      "id": "dllm_dataset_rationale_133",
+      "label": "Download and load tiny_shakespeare, extracting dialogue pairs if in\u2026",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "rationale",
+      "norm_label": "download and load tiny_shakespeare, extracting dialogue pairs if in...",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L133"
+    },
+    {
+      "id": "dllm_dataset_rationale_153",
+      "label": "Split long text into chunks suitable for tokenization. Merges lines until each\u2026",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "rationale",
+      "norm_label": "split long text into chunks suitable for tokenization. merges lines until each...",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L153"
+    },
+    {
+      "id": "dllm_dataset_rationale_185",
+      "label": "Extract consecutive dialogue turn pairs (Turn K -> Turn K+1) from text. For\u2026",
+      "_origin": "ast",
+      "community": 2,
+      "community_name": "DLLMDataset",
+      "file_type": "rationale",
+      "norm_label": "extract consecutive dialogue turn pairs (turn k -> turn k+1) from text. for...",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L185"
     },
     {
       "id": "dllm_dataset_rationale_234",
@@ -3381,191 +3660,15 @@
       "source_location": "L477"
     },
     {
-      "id": "dllm_model",
-      "label": "dllm/model.py",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "dllm/model.py",
-      "source_file": "dllm/model.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_tokenizer",
-      "label": "dllm/tokenizer.py",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "dllm/tokenizer.py",
-      "source_file": "dllm/tokenizer.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "scripts_benchmark",
-      "label": "benchmark.py",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "benchmark.py",
-      "source_file": "scripts/benchmark.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "torch",
-      "label": "torch",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "code",
-      "norm_label": "torch",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "dllm_model_rationale_1",
-      "label": "DLLM Model: A two-headed bidirectional Transformer for edit-based diffusion.\u2026",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "rationale",
-      "norm_label": "dllm model: a two-headed bidirectional transformer for edit-based diffusion....",
-      "source_file": "dllm/model.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_tokenizer_rationale_1",
-      "label": "DLLM Tokenizer: Extended RoBERTa tokenizer with edit operation tokens. Adds the\u2026",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "rationale",
-      "norm_label": "dllm tokenizer: extended roberta tokenizer with edit operation tokens. adds the...",
-      "source_file": "dllm/tokenizer.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "scripts_benchmark_rationale_83",
-      "label": "Load a held-out set of (prompt, reference) dialogue pairs.",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "torch",
-      "file_type": "rationale",
-      "norm_label": "load a held-out set of (prompt, reference) dialogue pairs.",
-      "source_file": "scripts/benchmark.py",
-      "source_location": "L83"
-    },
-    {
-      "id": "dllm_dataset_rationale_115",
-      "label": "Load text from a local file and parse chunks or dialogue pairs.",
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "rationale",
-      "norm_label": "load text from a local file and parse chunks or dialogue pairs.",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L115"
-    },
-    {
-      "id": "dllm_dataset_rationale_133",
-      "label": "Download and load tiny_shakespeare, extracting dialogue pairs if in\u2026",
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "rationale",
-      "norm_label": "download and load tiny_shakespeare, extracting dialogue pairs if in...",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L133"
-    },
-    {
-      "id": "dllm_dataset_rationale_153",
-      "label": "Split long text into chunks suitable for tokenization. Merges lines until each\u2026",
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "rationale",
-      "norm_label": "split long text into chunks suitable for tokenization. merges lines until each...",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L153"
-    },
-    {
-      "id": "dllm_dataset_rationale_185",
-      "label": "Extract consecutive dialogue turn pairs (Turn K -> Turn K+1) from text. For\u2026",
-      "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
-      "file_type": "rationale",
-      "norm_label": "extract consecutive dialogue turn pairs (turn k -> turn k+1) from text. for...",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L185"
-    },
-    {
       "id": "dllm_dataset_rationale_56",
       "label": "Args: tokenizer: DLLMTokenizer instance. corruptor: ForwardCorruptor instance.\u2026",
       "_origin": "ast",
-      "community": 21,
-      "community_name": "._chunk_text",
+      "community": 2,
+      "community_name": "DLLMDataset",
       "file_type": "rationale",
       "norm_label": "args: tokenizer: dllmtokenizer instance. corruptor: forwardcorruptor instance....",
       "source_file": "dllm/dataset.py",
       "source_location": "L56"
-    },
-    {
-      "id": "dllm_dataset",
-      "label": "dllm/dataset.py",
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "code",
-      "norm_label": "dllm/dataset.py",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "scripts_train",
-      "label": "train.py",
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "code",
-      "norm_label": "train.py",
-      "source_file": "scripts/train.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_bleu_eval_rationale_24",
-      "label": "Build a callable that returns {'bleu': score} on a fixed subset of a test TSV\u2026",
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "rationale",
-      "norm_label": "build a callable that returns {'bleu': score} on a fixed subset of a test tsv...",
-      "source_file": "dllm/bleu_eval.py",
-      "source_location": "L24"
-    },
-    {
-      "id": "dllm_dataset_rationale_1",
-      "label": "DLLM Dataset: Loads text data and applies forward corruption on the fly.\u2026",
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "rationale",
-      "norm_label": "dllm dataset: loads text data and applies forward corruption on the fly....",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_dataset_rationale_501",
-      "label": "Custom collate function; filters out dummy samples and stacks tensors. Handles\u2026",
-      "_origin": "ast",
-      "community": 22,
-      "community_name": "train.py",
-      "file_type": "rationale",
-      "norm_label": "custom collate function; filters out dummy samples and stacks tensors. handles...",
-      "source_file": "dllm/dataset.py",
-      "source_location": "L501"
     },
     {
       "id": "arlm_inference_py_no_grad",
@@ -3590,7 +3693,7 @@
       "source_location": ""
     },
     {
-      "id": "arlm_inference_rationale_118",
+      "id": "arlm_inference_rationale_117",
       "label": "Sample tokens from an (N, V) logits tensor (used by the benchmark).",
       "_origin": "ast",
       "community": 23,
@@ -3598,10 +3701,10 @@
       "file_type": "rationale",
       "norm_label": "sample tokens from an (n, v) logits tensor (used by the benchmark).",
       "source_file": "arlm/inference.py",
-      "source_location": "L118"
+      "source_location": "L117"
     },
     {
-      "id": "arlm_inference_rationale_61",
+      "id": "arlm_inference_rationale_60",
       "label": "Generate a continuation for the given prompt via autoregressive decoding. Args:\u2026",
       "_origin": "ast",
       "community": 23,
@@ -3609,10 +3712,10 @@
       "file_type": "rationale",
       "norm_label": "generate a continuation for the given prompt via autoregressive decoding. args:...",
       "source_file": "arlm/inference.py",
-      "source_location": "L61"
+      "source_location": "L60"
     },
     {
-      "id": "arlm_inference_rationale_99",
+      "id": "arlm_inference_rationale_98",
       "label": "Apply top-k and nucleus filtering to a (1, vocab) logits tensor.",
       "_origin": "ast",
       "community": 23,
@@ -3620,62 +3723,7 @@
       "file_type": "rationale",
       "norm_label": "apply top-k and nucleus filtering to a (1, vocab) logits tensor.",
       "source_file": "arlm/inference.py",
-      "source_location": "L99"
-    },
-    {
-      "id": "dllm_bleu_eval",
-      "label": "bleu_eval.py",
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "code",
-      "norm_label": "bleu_eval.py",
-      "source_file": "dllm/bleu_eval.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_inference",
-      "label": "dllm/inference.py",
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "code",
-      "norm_label": "dllm/inference.py",
-      "source_file": "dllm/inference.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_bleu_eval_rationale_1",
-      "label": "BLEU evaluation callback for the training loop. Translates a deterministic\u2026",
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "rationale",
-      "norm_label": "bleu evaluation callback for the training loop. translates a deterministic...",
-      "source_file": "dllm/bleu_eval.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_inference_rationale_1",
-      "label": "DLLM Inference: Iterative denoising with full 5-op canvas evolution. Canvas\u2026",
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "rationale",
-      "norm_label": "dllm inference: iterative denoising with full 5-op canvas evolution. canvas...",
-      "source_file": "dllm/inference.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_inference_rationale_44",
-      "label": "Iterative denoising inference for the DLLM model. Usage: inference =\u2026",
-      "_origin": "ast",
-      "community": 24,
-      "community_name": "DLLMInference",
-      "file_type": "rationale",
-      "norm_label": "iterative denoising inference for the dllm model. usage: inference =...",
-      "source_file": "dllm/inference.py",
-      "source_location": "L44"
+      "source_location": "L98"
     },
     {
       "id": "arlm_dataset_py_dataset",
@@ -3700,7 +3748,7 @@
       "source_location": ""
     },
     {
-      "id": "arlm_dataset_rationale_27",
+      "id": "arlm_dataset_rationale_26",
       "label": "PyTorch Dataset of teacher-forced prompt+response sequences. Args: tokenizer:\u2026",
       "_origin": "ast",
       "community": 25,
@@ -3708,161 +3756,7 @@
       "file_type": "rationale",
       "norm_label": "pytorch dataset of teacher-forced prompt+response sequences. args: tokenizer:...",
       "source_file": "arlm/dataset.py",
-      "source_location": "L27"
-    },
-    {
-      "id": "arlm_trainer_py_no_grad",
-      "label": "no_grad",
-      "_origin": "ast",
-      "community": 26,
-      "community_name": ".evaluate",
-      "file_type": "code",
-      "norm_label": "no_grad",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "arlm_trainer_rationale_101",
-      "label": "Main training loop. Args: train_loader: DataLoader yielding {'input_ids',\u2026",
-      "_origin": "ast",
-      "community": 26,
-      "community_name": ".evaluate",
-      "file_type": "rationale",
-      "norm_label": "main training loop. args: train_loader: dataloader yielding {'input_ids',...",
-      "source_file": "arlm/trainer.py",
-      "source_location": "L101"
-    },
-    {
-      "id": "arlm_trainer_rationale_185",
-      "label": "Run evaluation on the validation set. Returns averaged metrics.",
-      "_origin": "ast",
-      "community": 26,
-      "community_name": ".evaluate",
-      "file_type": "rationale",
-      "norm_label": "run evaluation on the validation set. returns averaged metrics.",
-      "source_file": "arlm/trainer.py",
-      "source_location": "L185"
-    },
-    {
-      "id": "arlm_trainer_rationale_211",
-      "label": "Save model, optimizer, and training state.",
-      "_origin": "ast",
-      "community": 26,
-      "community_name": ".evaluate",
-      "file_type": "rationale",
-      "norm_label": "save model, optimizer, and training state.",
-      "source_file": "arlm/trainer.py",
-      "source_location": "L211"
-    },
-    {
-      "id": "route",
-      "label": "route",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "app.py",
-      "file_type": "code",
-      "norm_label": "route",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "visualizer_app_py_visualizer_app",
-      "label": "app.py",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "app.py",
-      "file_type": "code",
-      "norm_label": "app.py",
-      "source_file": "visualizer/app.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "visualizer_app_rationale_1",
-      "label": "DLLM Visualizer \u2014 Flask backend. Usage: python visualizer/app.py --checkpoint\u2026",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "app.py",
-      "file_type": "rationale",
-      "norm_label": "dllm visualizer \u2014 flask backend. usage: python visualizer/app.py --checkpoint...",
-      "source_file": "visualizer/app.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "dllm_corruptor_rationale_125",
-      "label": "Builds an interleaved canvas with a noise level t skewed toward 1: For each\u2026",
-      "_origin": "ast",
-      "community": 28,
-      "community_name": "._get_random_noise_token",
-      "file_type": "rationale",
-      "norm_label": "builds an interleaved canvas with a noise level t skewed toward 1: for each...",
-      "source_file": "dllm/corruptor.py",
-      "source_location": "L125"
-    },
-    {
-      "id": "dllm_corruptor_rationale_255",
-      "label": "Build a progressive denoising trajectory for a single (prompt, response) pair.\u2026",
-      "_origin": "ast",
-      "community": 28,
-      "community_name": "._get_random_noise_token",
-      "file_type": "rationale",
-      "norm_label": "build a progressive denoising trajectory for a single (prompt, response) pair....",
-      "source_file": "dllm/corruptor.py",
-      "source_location": "L255"
-    },
-    {
-      "id": "dllm_corruptor_rationale_84",
-      "label": "Sample a random noise token from the noise pool, avoiding exclude_tok.",
-      "_origin": "ast",
-      "community": 28,
-      "community_name": "._get_random_noise_token",
-      "file_type": "rationale",
-      "norm_label": "sample a random noise token from the noise pool, avoiding exclude_tok.",
-      "source_file": "dllm/corruptor.py",
-      "source_location": "L84"
-    },
-    {
-      "id": "dllm_tokenizer_py_tensor",
-      "label": "Tensor",
-      "_origin": "ast",
-      "community": 29,
-      "community_name": ".decode",
-      "file_type": "code",
-      "norm_label": "tensor",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "or",
-      "label": "or",
-      "_origin": "ast",
-      "community": 29,
-      "community_name": ".decode",
-      "file_type": "code",
-      "norm_label": "or",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "dllm_tokenizer_rationale_122",
-      "label": "Decode token IDs back to a string.",
-      "_origin": "ast",
-      "community": 29,
-      "community_name": ".decode",
-      "file_type": "rationale",
-      "norm_label": "decode token ids back to a string.",
-      "source_file": "dllm/tokenizer.py",
-      "source_location": "L122"
-    },
-    {
-      "id": "dllm_tokenizer_rationale_135",
-      "label": "Tokenize text(s) with padding and truncation. Returns a dict with 'input_ids'\u2026",
-      "_origin": "ast",
-      "community": 29,
-      "community_name": ".decode",
-      "file_type": "rationale",
-      "norm_label": "tokenize text(s) with padding and truncation. returns a dict with 'input_ids'...",
-      "source_file": "dllm/tokenizer.py",
-      "source_location": "L135"
+      "source_location": "L26"
     },
     {
       "id": "dataloader",
@@ -3876,14 +3770,14 @@
       "source_location": ""
     },
     {
-      "id": "dllm_trainer",
-      "label": "dllm/trainer.py",
+      "id": "dllm_dataset",
+      "label": "dllm/dataset.py",
       "_origin": "ast",
       "community": 3,
       "community_name": "DLLMTrainer",
       "file_type": "code",
-      "norm_label": "dllm/trainer.py",
-      "source_file": "dllm/trainer.py",
+      "norm_label": "dllm/dataset.py",
+      "source_file": "dllm/dataset.py",
       "source_location": "L1"
     },
     {
@@ -3920,15 +3814,48 @@
       "source_location": ""
     },
     {
-      "id": "dllm_trainer_rationale_1",
-      "label": "DLLM Trainer: Training loop with combined Tagger + Generator loss. Handles: -\u2026",
+      "id": "scripts_train",
+      "label": "train.py",
+      "_origin": "ast",
+      "community": 3,
+      "community_name": "DLLMTrainer",
+      "file_type": "code",
+      "norm_label": "train.py",
+      "source_file": "scripts/train.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_bleu_eval_rationale_24",
+      "label": "Build a callable that returns {'bleu': score} on a fixed subset of a test TSV\u2026",
       "_origin": "ast",
       "community": 3,
       "community_name": "DLLMTrainer",
       "file_type": "rationale",
-      "norm_label": "dllm trainer: training loop with combined tagger + generator loss. handles: -...",
-      "source_file": "dllm/trainer.py",
+      "norm_label": "build a callable that returns {'bleu': score} on a fixed subset of a test tsv...",
+      "source_file": "dllm/bleu_eval.py",
+      "source_location": "L24"
+    },
+    {
+      "id": "dllm_dataset_rationale_1",
+      "label": "DLLM Dataset: Loads text data and applies forward corruption on the fly.\u2026",
+      "_origin": "ast",
+      "community": 3,
+      "community_name": "DLLMTrainer",
+      "file_type": "rationale",
+      "norm_label": "dllm dataset: loads text data and applies forward corruption on the fly....",
+      "source_file": "dllm/dataset.py",
       "source_location": "L1"
+    },
+    {
+      "id": "dllm_dataset_rationale_501",
+      "label": "Custom collate function; filters out dummy samples and stacks tensors. Handles\u2026",
+      "_origin": "ast",
+      "community": 3,
+      "community_name": "DLLMTrainer",
+      "file_type": "rationale",
+      "norm_label": "custom collate function; filters out dummy samples and stacks tensors. handles...",
+      "source_file": "dllm/dataset.py",
+      "source_location": "L501"
     },
     {
       "id": "dllm_trainer_rationale_121",
@@ -4030,28 +3957,6 @@
       "source_location": "L97"
     },
     {
-      "id": "arlm_inference_rationale_132",
-      "label": "Extract the newly generated portion of `full_text` (the continuation after the\u2026",
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "ARLMInference",
-      "file_type": "rationale",
-      "norm_label": "extract the newly generated portion of `full_text` (the continuation after the...",
-      "source_file": "arlm/inference.py",
-      "source_location": "L132"
-    },
-    {
-      "id": "arlm_inference_rationale_26",
-      "label": "Autoregressive sampling for the ARLM model. Usage: inference =\u2026",
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "ARLMInference",
-      "file_type": "rationale",
-      "norm_label": "autoregressive sampling for the arlm model. usage: inference =...",
-      "source_file": "arlm/inference.py",
-      "source_location": "L26"
-    },
-    {
       "id": "dllm_corruptor",
       "label": "corruptor.py",
       "_origin": "ast",
@@ -4074,6 +3979,28 @@
       "source_location": "L1"
     },
     {
+      "id": "dllm_tokenizer",
+      "label": "dllm/tokenizer.py",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "code",
+      "norm_label": "dllm/tokenizer.py",
+      "source_file": "dllm/tokenizer.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_trainer",
+      "label": "dllm/trainer.py",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "code",
+      "norm_label": "dllm/trainer.py",
+      "source_file": "dllm/trainer.py",
+      "source_location": "L1"
+    },
+    {
       "id": "dllm_corruptor_rationale_1",
       "label": "Forward Corruptor: Corrupts clean text sequences and computes Levenshtein edit\u2026",
       "_origin": "ast",
@@ -4085,6 +4012,17 @@
       "source_location": "L1"
     },
     {
+      "id": "dllm_corruptor_rationale_125",
+      "label": "Builds an interleaved canvas with a noise level t skewed toward 1: For each\u2026",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "rationale",
+      "norm_label": "builds an interleaved canvas with a noise level t skewed toward 1: for each...",
+      "source_file": "dllm/corruptor.py",
+      "source_location": "L125"
+    },
+    {
       "id": "dllm_corruptor_rationale_19",
       "label": "Applies synthetic edits to token sequences and computes ground-truth edit\u2026",
       "_origin": "ast",
@@ -4094,6 +4032,17 @@
       "norm_label": "applies synthetic edits to token sequences and computes ground-truth edit...",
       "source_file": "dllm/corruptor.py",
       "source_location": "L19"
+    },
+    {
+      "id": "dllm_corruptor_rationale_255",
+      "label": "Build a progressive denoising trajectory for a single (prompt, response) pair.\u2026",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "rationale",
+      "norm_label": "build a progressive denoising trajectory for a single (prompt, response) pair....",
+      "source_file": "dllm/corruptor.py",
+      "source_location": "L255"
     },
     {
       "id": "dllm_corruptor_rationale_398",
@@ -4195,6 +4144,17 @@
       "source_location": "L539"
     },
     {
+      "id": "dllm_corruptor_rationale_84",
+      "label": "Sample a random noise token from the noise pool, avoiding exclude_tok.",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "rationale",
+      "norm_label": "sample a random noise token from the noise pool, avoiding exclude_tok.",
+      "source_file": "dllm/corruptor.py",
+      "source_location": "L84"
+    },
+    {
       "id": "dllm_corruptor_rationale_95",
       "label": "Corrupt a clean token sequence and produce tag labels. Args: clean_ids: List of\u2026",
       "_origin": "ast",
@@ -4204,6 +4164,50 @@
       "norm_label": "corrupt a clean token sequence and produce tag labels. args: clean_ids: list of...",
       "source_file": "dllm/corruptor.py",
       "source_location": "L95"
+    },
+    {
+      "id": "dllm_tokenizer_rationale_1",
+      "label": "DLLM Tokenizer: Extended RoBERTa tokenizer with edit operation tokens. Adds the\u2026",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "rationale",
+      "norm_label": "dllm tokenizer: extended roberta tokenizer with edit operation tokens. adds the...",
+      "source_file": "dllm/tokenizer.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_trainer_rationale_1",
+      "label": "DLLM Trainer: Training loop with combined Tagger + Generator loss. Handles: -\u2026",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "ForwardCorruptor",
+      "file_type": "rationale",
+      "norm_label": "dllm trainer: training loop with combined tagger + generator loss. handles: -...",
+      "source_file": "dllm/trainer.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "dllm_tokenizer_py_tensor",
+      "label": "Tensor",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "tensor",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "or",
+      "label": "or",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "or",
+      "source_file": "",
+      "source_location": ""
     },
     {
       "id": "robertatokenizer",
@@ -4217,6 +4221,39 @@
       "source_location": ""
     },
     {
+      "id": "scripts_baseline_ar",
+      "label": "baseline_ar.py",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "baseline_ar.py",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scripts_baseline_ar_py_dataset",
+      "label": "Dataset",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "dataset",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scripts_baseline_ar_py_no_grad",
+      "label": "no_grad",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "code",
+      "norm_label": "no_grad",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
       "id": "dllm_tokenizer_rationale_116",
       "label": "Encode a text string into token IDs (no padding/truncation).",
       "_origin": "ast",
@@ -4226,6 +4263,28 @@
       "norm_label": "encode a text string into token ids (no padding/truncation).",
       "source_file": "dllm/tokenizer.py",
       "source_location": "L116"
+    },
+    {
+      "id": "dllm_tokenizer_rationale_122",
+      "label": "Decode token IDs back to a string.",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "decode token ids back to a string.",
+      "source_file": "dllm/tokenizer.py",
+      "source_location": "L122"
+    },
+    {
+      "id": "dllm_tokenizer_rationale_135",
+      "label": "Tokenize text(s) with padding and truncation. Returns a dict with 'input_ids'\u2026",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "tokenize text(s) with padding and truncation. returns a dict with 'input_ids'...",
+      "source_file": "dllm/tokenizer.py",
+      "source_location": "L135"
     },
     {
       "id": "dllm_tokenizer_rationale_151",
@@ -4303,6 +4362,28 @@
       "norm_label": "add edit operation tokens to the tokenizer vocabulary.",
       "source_file": "dllm/tokenizer.py",
       "source_location": "L74"
+    },
+    {
+      "id": "scripts_baseline_ar_rationale_34",
+      "label": "Teacher-forced (prompt + response) sequences extracted from dialogue pairs.",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "teacher-forced (prompt + response) sequences extracted from dialogue pairs.",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L34"
+    },
+    {
+      "id": "scripts_baseline_ar_rationale_68",
+      "label": "Shifted next-token labels; padding and the final position are ignored.",
+      "_origin": "ast",
+      "community": 5,
+      "community_name": "DLLMTokenizer",
+      "file_type": "rationale",
+      "norm_label": "shifted next-token labels; padding and the final position are ignored.",
+      "source_file": "scripts/baseline_ar.py",
+      "source_location": "L68"
     },
     {
       "id": "visualizer_app_js_visualizer_app",
@@ -5935,7 +6016,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/dataset.py",
-      "source_location": "L62",
+      "source_location": "L61",
       "weight": 1.0
     },
     {
@@ -5947,7 +6028,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/dataset.py",
-      "source_location": "L65",
+      "source_location": "L64",
       "weight": 1.0
     },
     {
@@ -5959,7 +6040,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/inference.py",
-      "source_location": "L87",
+      "source_location": "L86",
       "weight": 1.0
     },
     {
@@ -5971,7 +6052,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/inference.py",
-      "source_location": "L123",
+      "source_location": "L122",
       "weight": 1.0
     },
     {
@@ -5983,7 +6064,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/model.py",
-      "source_location": "L104",
+      "source_location": "L98",
       "weight": 1.0
     },
     {
@@ -5995,7 +6076,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/trainer.py",
-      "source_location": "L195",
+      "source_location": "L194",
       "weight": 1.0
     },
     {
@@ -6007,7 +6088,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/trainer.py",
-      "source_location": "L66",
+      "source_location": "L65",
       "weight": 1.0
     },
     {
@@ -6019,7 +6100,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/trainer.py",
-      "source_location": "L67",
+      "source_location": "L66",
       "weight": 1.0
     },
     {
@@ -6031,7 +6112,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/trainer.py",
-      "source_location": "L230",
+      "source_location": "L229",
       "weight": 1.0
     },
     {
@@ -6043,7 +6124,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/trainer.py",
-      "source_location": "L127",
+      "source_location": "L126",
       "weight": 1.0
     },
     {
@@ -6055,7 +6136,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/trainer.py",
-      "source_location": "L162",
+      "source_location": "L161",
       "weight": 1.0
     },
     {
@@ -6067,7 +6148,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "arlm/trainer.py",
-      "source_location": "L170",
+      "source_location": "L169",
       "weight": 1.0
     },
     {
@@ -7016,6 +7097,42 @@
       "context": "call",
       "source_file": "scripts/generate.py",
       "source_location": "L88",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data_clean_lines",
+      "target": "scripts_prepare_pretrain_data_devanagari_fraction",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L105",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data_clean_lines",
+      "target": "scripts_prepare_pretrain_data_normalize_ws",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L98",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data_main",
+      "target": "scripts_prepare_pretrain_data_clean_lines",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L145",
       "weight": 1.0
     },
     {
@@ -8011,7 +8128,7 @@
       "confidence_score": 1.0,
       "context": "decorator",
       "source_file": "arlm/inference.py",
-      "source_location": "L50",
+      "source_location": "L49",
       "weight": 1.0
     },
     {
@@ -8023,7 +8140,7 @@
       "confidence_score": 1.0,
       "context": "decorator",
       "source_file": "arlm/trainer.py",
-      "source_location": "L183",
+      "source_location": "L182",
       "weight": 1.0
     },
     {
@@ -8263,7 +8380,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "arlm/model.py",
-      "source_location": "L91",
+      "source_location": "L85",
       "weight": 1.0
     },
     {
@@ -8275,7 +8392,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "arlm/model.py",
-      "source_location": "L63",
+      "source_location": "L57",
       "weight": 1.0
     },
     {
@@ -8287,7 +8404,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "arlm/model.py",
-      "source_location": "L137",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -8299,7 +8416,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L62",
+      "source_location": "L57",
       "weight": 1.0
     },
     {
@@ -8407,7 +8524,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/dataset.py",
-      "source_location": "L20",
+      "source_location": "L19",
       "weight": 1.0
     },
     {
@@ -8419,7 +8536,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/dataset.py",
-      "source_location": "L23",
+      "source_location": "L22",
       "weight": 1.0
     },
     {
@@ -8431,7 +8548,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/dataset.py",
-      "source_location": "L59",
+      "source_location": "L58",
       "weight": 1.0
     },
     {
@@ -8443,7 +8560,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/dataset.py",
-      "source_location": "L60",
+      "source_location": "L59",
       "weight": 1.0
     },
     {
@@ -8467,7 +8584,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/inference.py",
-      "source_location": "L22",
+      "source_location": "L21",
       "weight": 1.0
     },
     {
@@ -8580,18 +8697,6 @@
     },
     {
       "source": "arlm_trainer",
-      "target": "arlm_model_load_arlm_state",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "arlm/trainer.py",
-      "source_location": "L229",
-      "weight": 1.0
-    },
-    {
-      "source": "arlm_trainer",
       "target": "arlm_dataset_build_labels",
       "relation": "imports",
       "_origin": "ast",
@@ -8599,7 +8704,19 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/trainer.py",
-      "source_location": "L23",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "arlm_trainer",
+      "target": "arlm_model_load_arlm_state",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "arlm/trainer.py",
+      "source_location": "L228",
       "weight": 1.0
     },
     {
@@ -9439,7 +9556,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/dataset.py",
-      "source_location": "L23",
+      "source_location": "L22",
       "weight": 1.0
     },
     {
@@ -9451,7 +9568,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/inference.py",
-      "source_location": "L22",
+      "source_location": "L21",
       "weight": 1.0
     },
     {
@@ -9463,7 +9580,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "arlm/trainer.py",
-      "source_location": "L23",
+      "source_location": "L22",
       "weight": 1.0
     },
     {
@@ -9667,7 +9784,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "arlm/dataset.py",
-      "source_location": "L41",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -9679,7 +9796,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "arlm/inference.py",
-      "source_location": "L34",
+      "source_location": "L33",
       "weight": 1.0
     },
     {
@@ -9691,7 +9808,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "arlm/model.py",
-      "source_location": "L137",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -9703,7 +9820,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "arlm/trainer.py",
-      "source_location": "L35",
+      "source_location": "L34",
       "weight": 1.0
     },
     {
@@ -9823,7 +9940,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "arlm/dataset.py",
-      "source_location": "L93",
+      "source_location": "L92",
       "weight": 1.0
     },
     {
@@ -9835,7 +9952,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "arlm/dataset.py",
-      "source_location": "L109",
+      "source_location": "L108",
       "weight": 1.0
     },
     {
@@ -9847,7 +9964,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "arlm/inference.py",
-      "source_location": "L98",
+      "source_location": "L97",
       "weight": 1.0
     },
     {
@@ -9859,7 +9976,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "arlm/inference.py",
-      "source_location": "L115",
+      "source_location": "L114",
       "weight": 1.0
     },
     {
@@ -9871,7 +9988,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L89",
+      "source_location": "L84",
       "weight": 1.0
     },
     {
@@ -9954,7 +10071,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L109",
+      "source_location": "L108",
       "weight": 1.0
     },
     {
@@ -9965,7 +10082,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L26",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
@@ -9976,7 +10093,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L97",
+      "source_location": "L96",
       "weight": 1.0
     },
     {
@@ -9987,7 +10104,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L25",
+      "source_location": "L24",
       "weight": 1.0
     },
     {
@@ -9998,7 +10115,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L137",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -10009,7 +10126,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L30",
+      "source_location": "L24",
       "weight": 1.0
     },
     {
@@ -10020,7 +10137,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L26",
+      "source_location": "L21",
       "weight": 1.0
     },
     {
@@ -10031,7 +10148,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L26",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
@@ -10362,6 +10479,50 @@
       "confidence_score": 1.0,
       "source_file": "scripts/generate_arlm.py",
       "source_location": "L53",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data",
+      "target": "scripts_prepare_pretrain_data_main",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L111",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data",
+      "target": "scripts_prepare_pretrain_data_normalize_ws",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L80",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data",
+      "target": "scripts_prepare_pretrain_data_devanagari_fraction",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L86",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data",
+      "target": "scripts_prepare_pretrain_data_clean_lines",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L93",
       "weight": 1.0
     },
     {
@@ -11098,7 +11259,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L26",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
@@ -11131,7 +11292,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L41",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -11142,7 +11303,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L90",
+      "source_location": "L89",
       "weight": 1.0
     },
     {
@@ -11153,7 +11314,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L93",
+      "source_location": "L92",
       "weight": 1.0
     },
     {
@@ -11164,7 +11325,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L115",
+      "source_location": "L114",
       "weight": 1.0
     },
     {
@@ -11175,7 +11336,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L131",
+      "source_location": "L130",
       "weight": 1.0
     },
     {
@@ -11186,7 +11347,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L34",
+      "source_location": "L33",
       "weight": 1.0
     },
     {
@@ -11197,7 +11358,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L51",
+      "source_location": "L50",
       "weight": 1.0
     },
     {
@@ -11208,7 +11369,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L98",
+      "source_location": "L97",
       "weight": 1.0
     },
     {
@@ -11219,7 +11380,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L115",
+      "source_location": "L109",
       "weight": 1.0
     },
     {
@@ -11230,7 +11391,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L39",
+      "source_location": "L33",
       "weight": 1.0
     },
     {
@@ -11241,7 +11402,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L63",
+      "source_location": "L57",
       "weight": 1.0
     },
     {
@@ -11252,7 +11413,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L91",
+      "source_location": "L85",
       "weight": 1.0
     },
     {
@@ -11263,7 +11424,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L29",
+      "source_location": "L24",
       "weight": 1.0
     },
     {
@@ -11274,7 +11435,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L56",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -11285,7 +11446,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L62",
+      "source_location": "L57",
       "weight": 1.0
     },
     {
@@ -11296,7 +11457,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L68",
+      "source_location": "L63",
       "weight": 1.0
     },
     {
@@ -11307,7 +11468,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L89",
+      "source_location": "L84",
       "weight": 1.0
     },
     {
@@ -11318,7 +11479,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L93",
+      "source_location": "L88",
       "weight": 1.0
     },
     {
@@ -11329,7 +11490,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L184",
+      "source_location": "L183",
       "weight": 1.0
     },
     {
@@ -11340,7 +11501,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L210",
+      "source_location": "L209",
       "weight": 1.0
     },
     {
@@ -11351,7 +11512,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L226",
+      "source_location": "L225",
       "weight": 1.0
     },
     {
@@ -11362,7 +11523,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L35",
+      "source_location": "L34",
       "weight": 1.0
     },
     {
@@ -11373,7 +11534,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L74",
+      "source_location": "L73",
       "weight": 1.0
     },
     {
@@ -11384,7 +11545,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L79",
+      "source_location": "L78",
       "weight": 1.0
     },
     {
@@ -11395,7 +11556,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L94",
+      "source_location": "L93",
       "weight": 1.0
     },
     {
@@ -12191,36 +12352,36 @@
       "weight": 1.0
     },
     {
-      "source": "arlm_dataset_rationale_114",
+      "source": "arlm_dataset_rationale_113",
       "target": "arlm_dataset_build_labels",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L114",
+      "source_location": "L113",
       "weight": 1.0
     },
     {
-      "source": "arlm_dataset_rationale_27",
+      "source": "arlm_dataset_rationale_26",
       "target": "arlm_dataset_arlmdataset",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L27",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
-      "source": "arlm_dataset_rationale_98",
+      "source": "arlm_dataset_rationale_97",
       "target": "arlm_dataset_make_collate",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/dataset.py",
-      "source_location": "L98",
+      "source_location": "L97",
       "weight": 1.0
     },
     {
@@ -12235,58 +12396,58 @@
       "weight": 1.0
     },
     {
-      "source": "arlm_inference_rationale_118",
+      "source": "arlm_inference_rationale_117",
       "target": "arlm_inference_arlminference_sample_tokens",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L118",
+      "source_location": "L117",
       "weight": 1.0
     },
     {
-      "source": "arlm_inference_rationale_132",
+      "source": "arlm_inference_rationale_131",
       "target": "arlm_inference_arlminference_extract_response",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L132",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
-      "source": "arlm_inference_rationale_26",
+      "source": "arlm_inference_rationale_25",
       "target": "arlm_inference_arlminference",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L26",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
-      "source": "arlm_inference_rationale_61",
+      "source": "arlm_inference_rationale_60",
       "target": "arlm_inference_arlminference_generate",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L61",
+      "source_location": "L60",
       "weight": 1.0
     },
     {
-      "source": "arlm_inference_rationale_99",
+      "source": "arlm_inference_rationale_98",
       "target": "arlm_inference_arlminference_sample_filters",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/inference.py",
-      "source_location": "L99",
+      "source_location": "L98",
       "weight": 1.0
     },
     {
@@ -12301,69 +12462,69 @@
       "weight": 1.0
     },
     {
-      "source": "arlm_model_rationale_116",
+      "source": "arlm_model_rationale_110",
       "target": "arlm_model_arlm_get_param_groups",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L116",
+      "source_location": "L110",
       "weight": 1.0
     },
     {
-      "source": "arlm_model_rationale_138",
+      "source": "arlm_model_rationale_132",
       "target": "arlm_model_load_arlm_state",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L138",
+      "source_location": "L132",
       "weight": 1.0
     },
     {
-      "source": "arlm_model_rationale_31",
+      "source": "arlm_model_rationale_25",
       "target": "arlm_model_arlm",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L31",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
-      "source": "arlm_model_rationale_40",
+      "source": "arlm_model_rationale_34",
       "target": "arlm_model_arlm_init",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L40",
+      "source_location": "L34",
       "weight": 1.0
     },
     {
-      "source": "arlm_model_rationale_69",
+      "source": "arlm_model_rationale_63",
       "target": "arlm_model_arlm_forward",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L69",
+      "source_location": "L63",
       "weight": 1.0
     },
     {
-      "source": "arlm_model_rationale_97",
+      "source": "arlm_model_rationale_91",
       "target": "arlm_model_arlm_compute_loss",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/model.py",
-      "source_location": "L97",
+      "source_location": "L91",
       "weight": 1.0
     },
     {
@@ -12378,69 +12539,69 @@
       "weight": 1.0
     },
     {
-      "source": "arlm_tokenizer_rationale_27",
+      "source": "arlm_tokenizer_rationale_22",
       "target": "arlm_tokenizer_arlmtokenizer",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L27",
+      "source_location": "L22",
       "weight": 1.0
     },
     {
-      "source": "arlm_tokenizer_rationale_30",
+      "source": "arlm_tokenizer_rationale_25",
       "target": "arlm_tokenizer_arlmtokenizer_init",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L30",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
-      "source": "arlm_tokenizer_rationale_57",
+      "source": "arlm_tokenizer_rationale_52",
       "target": "arlm_tokenizer_arlmtokenizer_encode",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L57",
+      "source_location": "L52",
       "weight": 1.0
     },
     {
-      "source": "arlm_tokenizer_rationale_63",
+      "source": "arlm_tokenizer_rationale_58",
       "target": "arlm_tokenizer_arlmtokenizer_decode",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L63",
+      "source_location": "L58",
       "weight": 1.0
     },
     {
-      "source": "arlm_tokenizer_rationale_76",
+      "source": "arlm_tokenizer_rationale_71",
       "target": "arlm_tokenizer_arlmtokenizer_call",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L76",
+      "source_location": "L71",
       "weight": 1.0
     },
     {
-      "source": "arlm_tokenizer_rationale_90",
+      "source": "arlm_tokenizer_rationale_85",
       "target": "arlm_tokenizer_arlmtokenizer_tokenizer",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/tokenizer.py",
-      "source_location": "L90",
+      "source_location": "L85",
       "weight": 1.0
     },
     {
@@ -12455,80 +12616,80 @@
       "weight": 1.0
     },
     {
-      "source": "arlm_trainer_rationale_101",
+      "source": "arlm_trainer_rationale_100",
       "target": "arlm_trainer_arlmtrainer_train",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L101",
+      "source_location": "L100",
       "weight": 1.0
     },
     {
-      "source": "arlm_trainer_rationale_185",
+      "source": "arlm_trainer_rationale_184",
       "target": "arlm_trainer_arlmtrainer_evaluate",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L185",
+      "source_location": "L184",
       "weight": 1.0
     },
     {
-      "source": "arlm_trainer_rationale_211",
+      "source": "arlm_trainer_rationale_210",
       "target": "arlm_trainer_arlmtrainer_save_checkpoint",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L211",
+      "source_location": "L210",
       "weight": 1.0
     },
     {
-      "source": "arlm_trainer_rationale_227",
+      "source": "arlm_trainer_rationale_226",
       "target": "arlm_trainer_arlmtrainer_load_checkpoint",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L227",
+      "source_location": "L226",
       "weight": 1.0
     },
     {
-      "source": "arlm_trainer_rationale_27",
+      "source": "arlm_trainer_rationale_26",
       "target": "arlm_trainer_arlmtrainer",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L27",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
-      "source": "arlm_trainer_rationale_75",
+      "source": "arlm_trainer_rationale_74",
       "target": "arlm_trainer_arlmtrainer_setup_optimizer",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L75",
+      "source_location": "L74",
       "weight": 1.0
     },
     {
-      "source": "arlm_trainer_rationale_80",
+      "source": "arlm_trainer_rationale_79",
       "target": "arlm_trainer_arlmtrainer_setup_scheduler",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "arlm/trainer.py",
-      "source_location": "L80",
+      "source_location": "L79",
       "weight": 1.0
     },
     {
@@ -13445,6 +13606,28 @@
       "weight": 1.0
     },
     {
+      "source": "scripts_prepare_pretrain_data_rationale_81",
+      "target": "scripts_prepare_pretrain_data_normalize_ws",
+      "relation": "rationale_for",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L81",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data_rationale_94",
+      "target": "scripts_prepare_pretrain_data_clean_lines",
+      "relation": "rationale_for",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L94",
+      "weight": 1.0
+    },
+    {
       "source": "scripts_prepare_translation_data_rationale_120",
       "target": "scripts_prepare_translation_data_hindi_fraction",
       "relation": "rationale_for",
@@ -13613,7 +13796,7 @@
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "arlm/dataset.py",
-      "source_location": "L43",
+      "source_location": "L42",
       "weight": 0.8
     },
     {
@@ -13624,7 +13807,7 @@
       "confidence": "INFERRED",
       "confidence_score": 0.95,
       "source_file": "arlm/inference.py",
-      "source_location": "L37",
+      "source_location": "L36",
       "weight": 0.8
     },
     {

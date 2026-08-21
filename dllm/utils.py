@@ -9,10 +9,40 @@ Includes:
 
 from __future__ import annotations
 
+import json
 import random
 import torch
 import numpy as np
 from typing import List, Tuple
+
+
+class JSONMetricsLogger:
+    """
+    Append training/validation metrics as newline-delimited JSON (JSONL).
+
+    Each line is a flat dict of one logged step, e.g.:
+        {"step": 10, "total_loss": 3.21, "lr": 5e-05, ...}
+
+    JSONL is chosen over a single JSON array so the file can be written
+    incrementally (safe to tail / partial-read / resume) and plotted by any
+    consumer without loading the whole history into memory.
+
+    Usage:
+        logger = JSONMetricsLogger("checkpoints/training_metrics.jsonl")
+        logger.log({"step": 10, "total_loss": 3.21})
+        logger.close()
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self._f = open(path, "a", encoding="utf-8")
+
+    def log(self, metrics: dict) -> None:
+        self._f.write(json.dumps(metrics) + "\n")
+        self._f.flush()
+
+    def close(self) -> None:
+        self._f.close()
 
 
 def set_seed(seed: int):
