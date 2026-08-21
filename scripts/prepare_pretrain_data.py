@@ -40,8 +40,11 @@ Notes:
 """
 
 import argparse
+import os
 import re
 import unicodedata
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 from datasets import load_dataset
 
@@ -121,37 +124,72 @@ def main():
                         help="Output plain-text file")
     parser.add_argument("--no_dedup", action="store_true",
                         help="Disable exact-line dedup")
+    parser.add_argument("--cache_dir", type=str, default="./data/hf_cache",
+                        help="Directory to cache the downloaded dataset (default: ./data/hf_cache)")
+    parser.add_argument("--num_proc", type=int, default=1,
+                        help="Parallel workers for cleaning (default 1 = streaming, low memory; "
+                             "set >1 to materialize docs and clean in parallel)")
     args = parser.parse_args()
 
     config = args.config or LANG_DEFAULTS[args.lang]["config"]
-    print(f"Streaming wikimedia/wikipedia (config={config}, split={args.split}, "
-          f"max_docs={args.max_docs})...")
+    os.makedirs(args.cache_dir, exist_ok=True)
 
-    ds = load_dataset("wikimedia/wikipedia", config, split=args.split, streaming=True)
+    print(f"Loading wikimedia/wikipedia (config={config}, split={args.split}, "
+          f"max_docs={args.max_docs}, cache_dir={args.cache_dir})...")
+    print("  First run downloads the dataset (may take a while for ~725MB); "
+          "subsequent runs reuse the cache and are fast.")
+
+    # Streaming keeps memory low; when num_proc>1 we materialize the capped
+    # docs and clean them in parallel workers instead.
+    ds = load_dataset(
+        "wikimedia/wikipedia", config, split=args.split,
+        streaming=(args.num_proc <= 1), cache_dir=args.cache_dir,
+    )
 
     seen = set()
     written = 0
     skipped_docs = 0
+
+    def emit(lines):
+        nonlocal written
+        for line in lines:
+            if not args.no_dedup:
+                if line in seen:
+                    continue
+                seen.add(line)
+            f.write(line + "\n")
+            written += 1
+
     with open(args.out, "w", encoding="utf-8") as f:
-        for i, item in enumerate(ds):
-            if args.max_docs is not None and i >= args.max_docs:
-                break
-
-            text = item.get("text", "") or ""
-            if not text.strip():
-                skipped_docs += 1
-                continue
-
-            for line in clean_lines(text, args.lang):
-                if not args.no_dedup:
-                    if line in seen:
-                        continue
-                    seen.add(line)
-                f.write(line + "\n")
-                written += 1
-
-            if (i + 1) % 20000 == 0:
-                print(f"  {i + 1} docs / {written} lines...", flush=True)
+        if args.num_proc > 1:
+            # Materialize capped docs, then clean in parallel.
+            docs = []
+            for i, item in enumerate(ds):
+                if args.max_docs is not None and i >= args.max_docs:
+                    break
+                text = item.get("text", "") or ""
+                if text.strip():
+                    docs.append(text)
+                else:
+                    skipped_docs += 1
+            print(f"  Cleaning {len(docs)} docs with {args.num_proc} workers...", flush=True)
+            clean = partial(clean_lines, lang=args.lang)
+            with ProcessPoolExecutor(max_workers=args.num_proc) as ex:
+                for n, lines in enumerate(ex.map(clean, docs), 1):
+                    emit(lines)
+                    if n % 20000 == 0:
+                        print(f"  {n} docs / {written} lines...", flush=True)
+        else:
+            for i, item in enumerate(ds):
+                if args.max_docs is not None and i >= args.max_docs:
+                    break
+                text = item.get("text", "") or ""
+                if not text.strip():
+                    skipped_docs += 1
+                    continue
+                emit(clean_lines(text, args.lang))
+                if (i + 1) % 20000 == 0:
+                    print(f"  {i + 1} docs / {written} lines...", flush=True)
 
     print(f"\nDone. Wrote {written} lines -> {args.out} "
           f"(skipped {skipped_docs} empty docs, "

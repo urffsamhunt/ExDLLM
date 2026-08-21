@@ -1,16 +1,16 @@
 # Graph Report - DLLM  (2026-08-21)
 
 ## Corpus Check
-- 55 files · ~53,265 words
+- 55 files · ~53,829 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
 - 488 nodes · 827 edges · 30 communities (28 shown, 2 thin omitted)
-- Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 94 edges (avg confidence: 0.83)
+- Extraction: 89% EXTRACTED · 11% INFERRED · 0% AMBIGUOUS · INFERRED: 95 edges (avg confidence: 0.83)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `91b9ab1d`
+- Built from commit: `ec071ffd`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

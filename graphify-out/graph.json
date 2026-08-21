@@ -439,7 +439,7 @@
       "file_type": "code",
       "norm_label": "clean_lines()",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L93"
+      "source_location": "L96"
     },
     {
       "id": "scripts_prepare_pretrain_data_devanagari_fraction",
@@ -451,7 +451,7 @@
       "file_type": "code",
       "norm_label": "devanagari_fraction()",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L86"
+      "source_location": "L89"
     },
     {
       "id": "scripts_prepare_pretrain_data_main",
@@ -463,7 +463,7 @@
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L111"
+      "source_location": "L114"
     },
     {
       "id": "scripts_prepare_pretrain_data_normalize_ws",
@@ -475,7 +475,7 @@
       "file_type": "code",
       "norm_label": "normalize_ws()",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L80"
+      "source_location": "L83"
     },
     {
       "id": "dllm_utils_compute_edit_accuracy",
@@ -2752,7 +2752,7 @@
       "source_location": "L1"
     },
     {
-      "id": "scripts_prepare_pretrain_data_rationale_81",
+      "id": "scripts_prepare_pretrain_data_rationale_84",
       "label": "NFKC normalize + collapse all whitespace runs.",
       "_origin": "ast",
       "community": 12,
@@ -2760,10 +2760,10 @@
       "file_type": "rationale",
       "norm_label": "nfkc normalize + collapse all whitespace runs.",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L81"
+      "source_location": "L84"
     },
     {
-      "id": "scripts_prepare_pretrain_data_rationale_94",
+      "id": "scripts_prepare_pretrain_data_rationale_97",
       "label": "Split article text into cleaned, content-bearing lines.",
       "_origin": "ast",
       "community": 12,
@@ -2771,7 +2771,7 @@
       "file_type": "rationale",
       "norm_label": "split article text into cleaned, content-bearing lines.",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L94"
+      "source_location": "L97"
     },
     {
       "id": "dllm_utils_py_tensor",
@@ -7185,18 +7185,6 @@
     },
     {
       "source": "scripts_prepare_pretrain_data_clean_lines",
-      "target": "scripts_prepare_pretrain_data_devanagari_fraction",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L105",
-      "weight": 1.0
-    },
-    {
-      "source": "scripts_prepare_pretrain_data_clean_lines",
       "target": "scripts_prepare_pretrain_data_normalize_ws",
       "relation": "calls",
       "_origin": "ast",
@@ -7204,19 +7192,19 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L98",
+      "source_location": "L101",
       "weight": 1.0
     },
     {
-      "source": "scripts_prepare_pretrain_data_main",
-      "target": "scripts_prepare_pretrain_data_clean_lines",
+      "source": "scripts_prepare_pretrain_data_clean_lines",
+      "target": "scripts_prepare_pretrain_data_devanagari_fraction",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L145",
+      "source_location": "L108",
       "weight": 1.0
     },
     {
@@ -10632,7 +10620,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L111",
+      "source_location": "L114",
       "weight": 1.0
     },
     {
@@ -10643,7 +10631,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L80",
+      "source_location": "L83",
       "weight": 1.0
     },
     {
@@ -10654,7 +10642,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L86",
+      "source_location": "L89",
       "weight": 1.0
     },
     {
@@ -10665,7 +10653,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L93",
+      "source_location": "L96",
       "weight": 1.0
     },
     {
@@ -13793,25 +13781,25 @@
       "weight": 1.0
     },
     {
-      "source": "scripts_prepare_pretrain_data_rationale_81",
+      "source": "scripts_prepare_pretrain_data_rationale_84",
       "target": "scripts_prepare_pretrain_data_normalize_ws",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L81",
+      "source_location": "L84",
       "weight": 1.0
     },
     {
-      "source": "scripts_prepare_pretrain_data_rationale_94",
+      "source": "scripts_prepare_pretrain_data_rationale_97",
       "target": "scripts_prepare_pretrain_data_clean_lines",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "scripts/prepare_pretrain_data.py",
-      "source_location": "L94",
+      "source_location": "L97",
       "weight": 1.0
     },
     {
@@ -13889,6 +13877,18 @@
       "confidence_score": 1.0,
       "source_file": "visualizer/app.py",
       "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "scripts_prepare_pretrain_data_main",
+      "target": "scripts_prepare_pretrain_data_clean_lines",
+      "relation": "indirect_call",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "argument",
+      "source_file": "scripts/prepare_pretrain_data.py",
+      "source_location": "L176",
       "weight": 1.0
     },
     {
@@ -15604,5 +15604,5 @@
       "source_file": "wiki/Training-and-Inference.md"
     }
   ],
-  "built_at_commit": "91b9ab1dbc225e7996b2b173e8a606dc94a3dc26"
+  "built_at_commit": "ec071ffd769b4c526864950ef30fc084bbb0c6b8"
 }

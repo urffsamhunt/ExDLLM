@@ -149,6 +149,8 @@ Key flags:
 | `--max_docs` | `200000` | Max articles to stream (`None` = no cap). |
 | `--out` | *(required)* | Output plain-text file. |
 | `--no_dedup` | off | Disable exact-line dedup. |
+| `--cache_dir` | `./data/hf_cache` | Where the downloaded dataset is cached; re-runs reuse it (the ~725MB first download only happens once). |
+| `--num_proc` | `1` | Parallel workers for cleaning. `1` streams with low memory; `>1` materializes the capped docs and cleans them in parallel (faster, more RAM). |
 
 > **Verify `--config`**: Wikipedia snapshots are date-suffixed and can change;
 > check the live `wikimedia/wikipedia` dataset card for the current date string
