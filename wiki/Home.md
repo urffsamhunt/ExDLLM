@@ -37,7 +37,7 @@ DLLM/
 │   └── default.yaml          # Master configuration file
 ├── data/
 │   ├── tiny_shakespeare.txt  # Default dataset cache
-│   └── en_hi_*.tsv           # Samanantar (ai4bharat) English<->Hindi parallel data (translation.yaml)
+│   └── en_hi_*.tsv           # IITB en-hi + MUSE dict English<->Hindi parallel data (translation.yaml)
 ├── dllm/                     # Core Python module
 │   ├── __init__.py           # Package exports
 │   ├── corruptor.py          # Forward corruption & Levenshtein alignment
@@ -50,7 +50,7 @@ DLLM/
 ├── scripts/
 │   ├── baseline_ar.py         # Autoregressive baseline (same backbone, next-token objective)
 │   ├── generate.py            # Text generation script
-│   ├── prepare_translation_data.py  # OPUS-100 en-hi -> TSV pairs (both directions)
+│   ├── prepare_translation_data.py  # IITB en-hi + MUSE dict -> TSV pairs (both directions)
 │   ├── train.py               # Model training entrypoint
 │   └── translate.py           # Translate / BLEU-eval with a trained checkpoint
 ├── wiki/                     # Repository documentation wiki

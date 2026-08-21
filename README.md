@@ -62,7 +62,7 @@ pip install -r requirements.txt
 ## 📊 Datasets
 
 - **Tiny Shakespeare**: The default dataset (`data/tiny_shakespeare.txt`) is automatically loaded via Hugging Face Datasets (`datasets` library). The dataset is split into dialogue pairs (prompt‑response) for training.
-- **Custom parallel data**: For translation tasks, you can prepare a TSV file with source‑target pairs (one per line). Use `scripts/prepare_translation_data.py` to convert OPUS‑100 or similar parallel corpora into the required format.
+- **Custom parallel data**: For translation tasks, you can prepare a TSV file with source‑target pairs (one per line). Use `scripts/prepare_translation_data.py` to build the training set from the IIT Bombay English‑Hindi corpus plus the MUSE/ARRIVAL word dictionary.
 
 ---
 
@@ -102,6 +102,28 @@ python scripts/translate.py \
   --checkpoint checkpoints_trans/best_model.pt \
   --config configs/translation.yaml \
   --test_path data/en_hi_test.tsv
+```
+
+### 4. Monolingual pretraining (English / Hindi)
+
+Before translation fine-tuning, the XLM‑RoBERTa backbone can be adapted to clean
+monolingual grammar with DLLM's **unconditional denoising** objective (no
+prompt/response pairing — the model learns to reverse length-changing
+corruption on raw text). Prepare Wikipedia data for either language:
+
+```bash
+# English
+python scripts/prepare_pretrain_data.py --lang en --max_docs 200000 --out data/pretrain_en.txt
+
+# Hindi (gated to predominantly Devanagari text)
+python scripts/prepare_pretrain_data.py --lang hi --max_docs 200000 --out data/pretrain_hi.txt
+```
+
+Then train with the corresponding config:
+
+```bash
+python scripts/train.py --config configs/pretrain_en.yaml --save_dir ./checkpoints_pretrain_en
+python scripts/train.py --config configs/pretrain_hi.yaml --save_dir ./checkpoints_pretrain_hi
 ```
 
 ---
@@ -209,21 +231,32 @@ DLLM/
 │   ├── translation.yaml
 │   └── translation_kaggle.yaml
 ├── data/                         # Datasets (tiny_shakespeare, en‑hi TSV files)
-├── dllm/                         # Core Python module
+├── dllm/                         # Core DLLM module (discrete diffusion)
 │   ├── __init__.py
 │   ├── corruptor.py              # Forward corruption & Levenshtein alignment
 │   ├── dataset.py                # PyTorch Dataset & collate_fn
 │   ├── inference.py              # Iterative reverse denoising engine
-│   ├── model.py                  # Dual‑head RoBERTa model
+│   ├── model.py                  # Dual-head RoBERTa model
 │   ├── tokenizer.py              # Extended RoBERTa tokenizer
 │   ├── trainer.py                # AdamW training loop with LR scheduler
 │   └── utils.py                  # Sequence expansion/contraction & helpers
+├── arlm/                         # Core ARLM module (autoregressive baseline)
+│   ├── __init__.py
+│   ├── dataset.py                # Teacher-forced prompt+response sequences
+│   ├── inference.py              # Left-to-right autoregressive generation
+│   ├── model.py                  # Causal LM wrapper (RobertaForCausalLM / GPT2)
+│   ├── tokenizer.py              # Standard causal-LM tokenizer wrapper
+│   └── trainer.py                # Teacher-forced next-token training loop
 ├── scripts/
-│   ├── train.py                  # Model training entrypoint
-│   ├── generate.py               # Text generation script
+│   ├── train.py                  # DLLM training entrypoint
+│   ├── generate.py               # DLLM text generation script
 │   ├── translate.py              # Translation / BLEU evaluation
-│   ├── baseline_ar.py            # Autoregressive baseline (causal RoBERTa)
-│   └── prepare_translation_data.py
+│   ├── baseline_ar.py            # Legacy autoregressive baseline (single script)
+│   ├── train_arlm.py             # ARLM training entrypoint
+│   ├── generate_arlm.py          # ARLM text generation script
+│   ├── benchmark.py              # DLLM vs ARLM benchmark on held-out prompts
+│   ├── prepare_translation_data.py
+│   └── prepare_pretrain_data.py  # Monolingual Wikipedia pretraining data (en/hi)
 ├── wiki/                         # Detailed documentation (architecture, data, training, inference)
 ├── visualizer/                   # Flask web UI for interactive denoising
 │   ├── app.py
@@ -246,19 +279,48 @@ Open `http://127.0.0.1:5000` in your browser, enter a prompt, and watch the mode
 
 ---
 
-## 🔁 Autoregressive Baseline
+## 🔁 Autoregressive Baseline (ARLM)
 
-For comparison, the repository includes an autoregressive baseline (`scripts/baseline_ar.py`) that uses the same RoBERTa backbone but with a causal mask and next‑token prediction objective. Train it with:
+For comparison, the repository includes a full autoregressive baseline module
+(`arlm/`) that trains a standard causal LM (default: causal-masked RoBERTa via
+`RobertaForCausalLM`, reusing the pretrained LM head) with a teacher-forced
+next-token objective on the **same dialogue-pair data** as the DLLM. The
+optimizer, LR schedule, gradient accumulation, and checkpoint format mirror
+the DLLM trainer so the two are directly comparable.
+
+Train it:
 
 ```bash
-python scripts/baseline_ar.py --config configs/default.yaml --save_dir ./baseline_ar
+python scripts/train_arlm.py --config configs/arlm.yaml --save_dir ./models_ar
 ```
 
 Generate samples:
 
 ```bash
-python scripts/baseline_ar.py --checkpoint ./baseline_ar/best_model.pt --prompt "MENENIUS:"
+python scripts/generate_arlm.py --checkpoint ./models_ar/best_model.pt --prompt "MENENIUS:"
 ```
+
+### Benchmarking DLLM vs ARLM
+
+Once you have trained both a DLLM checkpoint and an ARLM checkpoint, run the
+benchmark harness to compare them on the same held-out prompts:
+
+```bash
+python scripts/benchmark.py \
+  --dllm_checkpoint ./checkpoints_v2/best_model.pt \
+  --arlm_checkpoint ./models_ar/best_model.pt \
+  --config configs/default.yaml \
+  --arlm_config configs/arlm.yaml \
+  --n 50
+```
+
+The benchmark reports per-model parameter counts, generation wall-time
+(tokens/sec), BLEU / chrF against the reference responses (when `sacrebleu` is
+installed), and side-by-side sample generations for qualitative inspection.
+
+A legacy single-script autoregressive baseline also exists at
+`scripts/baseline_ar.py`; the `arlm/` module is the maintained, structured
+replacement.
 
 ---
 

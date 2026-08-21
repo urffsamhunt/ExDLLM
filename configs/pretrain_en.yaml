@@ -1,0 +1,56 @@
+# DLLM English Pretraining Configuration
+#
+# Continued pretraining / domain adaptation of the XLM-RoBERTa backbone on
+# clean monolingual English (Wikipedia), using DLLM's unconditional denoising
+# objective. The model learns the edit vocabulary (KEEP/DELETE/REPLACE/INSERT/
+# EXPAND) and length-changing denoising dynamics that MLM pretraining cannot
+# express.
+#
+# Unlike prompt_response (translation) mode, unconditional mode has no prompt
+# to protect and no meaningful length-head target, so `sub_iterations` is left
+# off and the length head receives no supervision (resp_length = -100).
+
+model:
+  backbone: "xlm-roberta-base"
+  hidden_dropout_prob: 0.1
+  attention_probs_dropout_prob: 0.1
+  tag_weights: [0.7, 0.8, 1.0, 2.0, 4.0]   # KEEP, DELETE, REPLACE, INSERT, EXPAND
+  len_smoothing: 0.15
+
+tokenizer:
+  base: "xlm-roberta-base"
+  max_length: 192
+
+training:
+  batch_size: 2               # XLM-R (250k vocab, 471M params) is memory-heavy on 8GB
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 50000
+  gradient_accumulation_steps: 8   # effective batch stays 16
+  log_every: 10
+  eval_every: 500
+  scheduled_sampling_prob: 0.0     # no self-draft during unconditional pretraining
+
+data:
+  dataset_name: "./data/pretrain_en.txt"   # plain text, one cleaned chunk per line
+  val_dataset_name: "./data/pretrain_en.txt"
+  mode: "unconditional"
+  max_prompt_length: 48
+  max_response_length: 48
+  corruption:
+    replace_ratio: 0.10
+    delete_ratio: 0.05
+    insert_ratio: 0.05
+    expand_ratio: 0.05
+    mask_ratio: 0.80
+    noise_vocab_size: 100
+    expand_prob: 0.10
+    insert_prob: 0.15
+    t_skew: 2.0
+    shortage_prob: 0.35
+
+inference:
+  max_iterations: 20
+  keep_threshold: 0.9
+  confidence_threshold: 0.0

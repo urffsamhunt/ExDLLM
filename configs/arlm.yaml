@@ -1,0 +1,38 @@
+# ARLM (Autoregressive Baseline) Configuration
+#
+# Mirrors configs/default.yaml so that training the ARLM is directly
+# comparable to the DLLM: same backbone, same data, same batch / optimizer /
+# schedule. The only difference is the objective (next-token prediction
+# instead of edit-based diffusion).
+
+model:
+  backbone: "roberta-base"          # causal-masked RoBERTa (RobertaForCausalLM)
+
+tokenizer:
+  base: "roberta-base"
+  max_length: 192
+
+training:
+  batch_size: 8
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  warmup_steps: 500
+  # The ARLM has no sub-iterations (each step is one forward pass), so it can
+  # afford more optimizer steps than the DLLM for the same FLOPs budget.
+  max_steps: 25000
+  gradient_accumulation_steps: 2
+  log_every: 10
+  eval_every: 500
+
+data:
+  dataset_name: "tiny-shakespeare"
+  val_dataset_name: "tiny-shakespeare"
+  mode: "prompt_response"       # teacher-forced (prompt + response) sequences
+  max_prompt_length: 48
+  max_response_length: 48
+
+inference:
+  max_new_tokens: 64            # default generation length
+  temperature: 1.0
+  top_k: 50
+  top_p: 0.9

@@ -138,6 +138,11 @@ class DLLMInference:
 
         canvas_ids.append(eos); canvas_types.append('eos')
 
+        # Parallel to canvas_types: records, for each mask anchor position, the
+        # token a prior INSERT already emitted against it (None = none yet).
+        # This lets _execute_edits downgrade a duplicate INSERT to KEEP (Fix A).
+        insert_history: List[Optional[int]] = [None] * len(canvas_ids)
+
         trajectory = []
         tag_names = {0: "KEEP", 1: "DELETE", 2: "REPLACE", 3: "INSERT", 4: "EXPAND"}
         tag_names_list = ["KEEP", "DELETE", "REPLACE", "INSERT", "EXPAND"]
@@ -172,6 +177,7 @@ class DLLMInference:
             if len(canvas_ids) > self.max_length:
                 canvas_ids   = canvas_ids[:self.max_length - 1]   + [eos]
                 canvas_types = canvas_types[:self.max_length - 1] + ['eos']
+                insert_history = insert_history[:self.max_length - 1] + [None]
 
             input_ids = torch.tensor([canvas_ids], device=self.device)
             attn_mask = torch.ones_like(input_ids)
@@ -200,8 +206,9 @@ class DLLMInference:
                 counts[tag_names_list[t] if 0 <= t < len(tag_names_list) else "KEEP"] += 1
 
             # ── Execute edits with type propagation ────────────────────
-            new_canvas_ids, new_canvas_types = self._execute_edits(
-                canvas_ids, canvas_types, tag_predictions, generated_tokens
+            new_canvas_ids, new_canvas_types, new_insert_history = self._execute_edits(
+                canvas_ids, canvas_types, tag_predictions, generated_tokens,
+                insert_history,
             )
 
             # ── Convergence check (after executing edits) ─────────────
@@ -219,7 +226,9 @@ class DLLMInference:
             )
             canvas_unchanged = (new_canvas_ids == canvas_ids)
 
-            canvas_ids, canvas_types = new_canvas_ids, new_canvas_types
+            canvas_ids, canvas_types, insert_history = (
+                new_canvas_ids, new_canvas_types, new_insert_history
+            )
 
 
             if return_trajectory:
@@ -318,7 +327,8 @@ class DLLMInference:
         canvas_types: List[str],
         tag_predictions: List[int],
         generated_tokens: List[int],
-    ) -> Tuple[List[int], List[str]]:
+        insert_history: Optional[List[Optional[int]]] = None,
+    ) -> Tuple[List[int], List[str], List[Optional[int]]]:
         """
         Apply predicted edit operations to the canvas, enforcing positional rules:
 
@@ -340,19 +350,33 @@ class DLLMInference:
           DELETE            → position removed
           INSERT(gen_tok)   → [gen_tok:'response_inserted', original_tok:original_type]
           EXPAND            → [MASK:'response_slot', MASK:'response_slot']
+
+        insert_history: a list parallel to canvas_types. For each mask anchor
+        position it records the token a prior INSERT already emitted there (or
+        None). This lets us downgrade a duplicate INSERT on the *same anchor* to
+        KEEP, killing self-induced duplication without touching genuine
+        cross-position repetition (which code legitimately uses).
         """
         M = self.tokenizer.mask_id
 
         new_ids:   List[int] = []
         new_types: List[str] = []
+        new_hist:  List[Optional[int]] = []
+
+        # Resolve to a concrete list (never None) so indexing is type-safe.
+        hist_list: List[Optional[int]] = (
+            list(insert_history) if insert_history is not None
+            else [None] * len(canvas_ids)
+        )
 
         for i, (tok_id, tok_type) in enumerate(zip(canvas_ids, canvas_types)):
             tag     = tag_predictions[i] if i < len(tag_predictions) else KEEP
             gen_tok = generated_tokens[i] if i < len(generated_tokens) else tok_id
+            hist: Optional[int] = hist_list[i] if i < len(hist_list) else None
 
             # ── Structural positions: always KEEP ──────────────────────
             if tok_type in ('bos', 'eos', 'prompt_imask'):
-                new_ids.append(tok_id); new_types.append(tok_type)
+                new_ids.append(tok_id); new_types.append(tok_type); new_hist.append(None)
                 continue
 
             # ── Rule 2: prompt_tok cannot be pure KEEP ─────────────────
@@ -372,19 +396,33 @@ class DLLMInference:
                     new_types.append('response_filled')
                 else:
                     new_types.append(tok_type)
+                new_hist.append(None)
 
             elif tag == INSERT:
-                # Insert gen_tok BEFORE current position, keep MASK for next iteration
-                new_ids.append(gen_tok);  new_types.append('response_inserted')
-                new_ids.append(tok_id);   new_types.append(tok_type)  # MASK stays
+                # Fix A: if this anchor has *already* emitted gen_tok via a prior
+                # INSERT, this is a self-induced duplicate. Downgrade to KEEP the
+                # anchor rather than emitting the same token again. This is local:
+                # it only affects a mask anchor re-firing at itself, never a
+                # legitimate repeated token at a *different* position.
+                if hist == gen_tok:
+                    new_ids.append(tok_id); new_types.append(tok_type)
+                    new_hist.append(hist)
+                else:
+                    # Insert gen_tok BEFORE current position, keep MASK for next
+                    # iteration; record gen_tok against the anchor for next time.
+                    new_ids.append(gen_tok);  new_types.append('response_inserted')
+                    new_hist.append(None)
+                    new_ids.append(tok_id);   new_types.append(tok_type)  # MASK stays
+                    new_hist.append(gen_tok)
 
             elif tag == EXPAND:
                 # Single MASK → two fresh response_slot MASKs (dynamic lengthening)
-                new_ids.append(M); new_types.append('response_slot')
-                new_ids.append(M); new_types.append('response_slot')
+                new_ids.append(M); new_types.append('response_slot'); new_hist.append(None)
+                new_ids.append(M); new_types.append('response_slot'); new_hist.append(None)
 
             else:  # KEEP (or unknown)
                 new_ids.append(tok_id); new_types.append(tok_type)
+                new_hist.append(None)
 
         # Safety: never return empty canvas
         if not new_ids:
@@ -392,8 +430,9 @@ class DLLMInference:
             eos = self.tokenizer.eos_id
             new_ids   = [bos, eos]
             new_types = ['bos', 'eos']
+            new_hist  = [None, None]
 
-        return new_ids, new_types
+        return new_ids, new_types, new_hist
 
     # ── Canvas Decoding ────────────────────────────────────────────────
 
