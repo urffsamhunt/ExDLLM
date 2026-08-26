@@ -8,6 +8,8 @@
 
 The model uses a bidirectional RoBERTa/XLM‑RoBERTa backbone with dual heads (tagger + generator) and is trained via a forward corruption process that computes optimal Levenshtein edit paths between corrupted and clean text.
 
+This repository also contains a **Diffusion Schrödinger Bridge (DSB)** line of work: a score‑based, continuous SDE formulation that transports an input embedding (DP1) to an output embedding (DP2), optionally combined with the discrete edit heads (the *DSBHybrid*). See the [Diffusion Schrödinger Bridge (DSB)](#-diffusion-schrödinger-bridge-dsb) section.
+
 ---
 
 ## Table of Contents
@@ -16,6 +18,7 @@ The model uses a bidirectional RoBERTa/XLM‑RoBERTa backbone with dual heads (t
 - [Installation](#-installation)
 - [Datasets](#-datasets)
 - [Quick Start](#-quick-start)
+- [Diffusion Schrödinger Bridge (DSB)](#-diffusion-schrödinger-bridge-dsb)
 - [Architecture Overview](#-architecture-overview)
 - [Data & Corruption](#-data--corruption)
 - [Training](#-training)
@@ -174,6 +177,77 @@ After pretraining, load the checkpoint and continue with task fine-tuning
 
 ---
 
+## 🌉 Diffusion Schrödinger Bridge (DSB)
+
+The DSB line of work models a **Markov chain that transports an input datapoint
+DP1 to an output datapoint DP2 in continuous embedding space** via a stochastic
+differential equation (SDE):
+
+```
+dx_t = β_t · (DP2 − x_t) dt + √β_t dW_t
+```
+
+The drift is the *relative position vector* of DP2 w.r.t. the current point,
+plus Brownian noise. Because the drift is linear and the noise is additive
+Gaussian, the transition kernel is Gaussian in closed form, so the exact
+conditional score is available analytically and training reduces to
+**denoising score matching** against it. Generation reverses the SDE from DP1
+toward DP2.
+
+### Two variants
+
+| | Plain DSB | DSBHybrid |
+|---|---|---|
+| Script | `train_dsb_pretrain.py` | `train_dsb_hybrid.py` |
+| Config | `configs/dsb_pretrain.yaml` | `configs/dsb_hybrid_pretrain.yaml` |
+| Heads | score net only | score net + tagger + generator |
+| Checkpoint key | `score_net` | `hybrid` |
+| Text decode | nearest‑neighbor over corpus | edit‑based iterative decode |
+
+Both are **unconditional pretraining** on raw text (corrupted→clean, no
+input/output pairs). The hybrid additionally trains the discrete edit heads, so
+its checkpoints decode into edit‑based text rather than nearest‑neighbor
+retrieval.
+
+### Pretrain the plain DSB
+
+```bash
+python scripts/train_dsb_pretrain.py --config configs/dsb_pretrain.yaml \
+    --save_dir ./checkpoints_dsb_pretrain
+```
+
+### Pretrain the DSBHybrid (with edit heads)
+
+```bash
+python scripts/train_dsb_hybrid.py --config configs/dsb_hybrid_pretrain.yaml \
+    --save_dir ./checkpoints_dsb_hybrid
+```
+
+### Generate text
+
+`scripts/generate_dsb_hybrid.py` auto‑detects the checkpoint format:
+
+```bash
+# Hybrid checkpoint -> edit-based iterative decode
+python scripts/generate_dsb_hybrid.py \
+    --checkpoint checkpoints_dsb_hybrid/best.pt --prompt "the quick brown fox"
+
+# Plain DSB checkpoint -> nearest-neighbor over a corpus
+python scripts/generate_dsb_hybrid.py \
+    --checkpoint checkpoints_dsb_pretrain/best.pt \
+    --prompt "the king of england" --corpus data/pretrain_en.txt --k 5
+```
+
+### Interpretability diagnostics
+
+The DSB reports a **baseline loss** (the zero‑score reference, ≈ 1.0) and a
+**signal‑captured** percentage (`(baseline − loss) / baseline`) so the raw
+score‑matching MSE is interpretable: `~0%` means the score net predicts
+nothing; `→100%` means it matches the true score. A `reconstruction_error`
+metric reports the full reverse‑SDE generation error vs. the true DP2.
+
+---
+
 ## 🏗️ Architecture Overview
 
 DLLM consists of three main components:
@@ -283,6 +357,8 @@ DLLM/
 │   ├── __init__.py
 │   ├── corruptor.py              # Forward corruption & Levenshtein alignment
 │   ├── dataset.py                # PyTorch Dataset & collate_fn
+│   ├── dsb.py                    # Diffusion Schrödinger Bridge (SDE + score)
+│   ├── dsb_hybrid.py             # DSB + discrete edit heads (tagger/generator)
 │   ├── inference.py              # Iterative reverse denoising engine
 │   ├── model.py                  # Dual-head RoBERTa model
 │   ├── tokenizer.py              # Extended RoBERTa tokenizer
@@ -304,7 +380,11 @@ DLLM/
 │   ├── generate_arlm.py          # ARLM text generation script
 │   ├── benchmark.py              # DLLM vs ARLM benchmark on held-out prompts
 │   ├── prepare_translation_data.py
-│   └── prepare_pretrain_data.py  # Monolingual Wikipedia pretraining data (en/hi)
+│   ├── prepare_pretrain_data.py  # Monolingual Wikipedia pretraining data (en/hi)
+│   ├── train_dsb.py              # DSB training (paired input/output)
+│   ├── train_dsb_pretrain.py     # Plain DSB unconditional pretraining
+│   ├── train_dsb_hybrid.py       # DSBHybrid pretraining (edit heads)
+│   └── generate_dsb_hybrid.py    # DSB / DSBHybrid text generation
 ├── wiki/                         # Detailed documentation (architecture, data, training, inference)
 ├── visualizer/                   # Flask web UI for interactive denoising
 │   ├── app.py
