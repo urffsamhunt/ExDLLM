@@ -1,0 +1,65 @@
+# DLLM — DSBHybrid pretraining (Diffusion Schrödinger Bridge + discrete edits).
+#
+# Jointly learns:
+#   * continuous DP1 -> DP2 SDE transport (denoising score matching), and
+#   * discrete edit structure (tagger=head edit ops + generator=head tokens).
+#
+# Corruption schemes (data.corruption_scheme):
+#   "fixed" — in-place mask/REPLACE (phase 1; exact position alignment).
+#   "full"  — full Levenshtein edit grammar via ForwardCorruptor (phase 2;
+#             INSERT/DELETE/EXPAND), aligned to the SDE canvas.
+
+model:
+  embedder: "xlm-roberta-base"
+  max_length: 128
+  train_embedder: true
+  gradient_checkpointing: true
+  # Edit-conditioned score network (phase 2): conditions the drift on prior
+  # edit tags. Set true when using corruption_scheme "full".
+  edit_conditioned_score: false
+  # Score network (MLP) hyperparameters.
+  hidden_dim: 512
+  num_layers: 3
+  time_embed_dim: 128
+  # Optional per-class weights for the tagger (KEEP/DELETE/REPLACE/INSERT/EXPAND).
+  tag_weights: [0.7, 0.8, 1.0, 2.0, 4.0]
+
+dsb:
+  beta_schedule: "linear"
+  num_steps: 1000
+  beta_min: 0.0001
+  beta_max: 0.02
+
+data:
+  train_path: "./data/pretrain_en.txt"
+  val_path: null
+  shuffle_buffer: 100000
+  val_max_batches: 100
+  corruption_scheme: "fixed"     # "fixed" | "full"
+  corruption:
+    mask_prob: 0.15
+    mask_ratio: 0.8
+    noise_vocab_size: 100
+    replace_ratio: 0.10          # (full scheme)
+    delete_ratio: 0.05           # (full scheme)
+    insert_ratio: 0.05           # (full scheme)
+    expand_ratio: 0.05           # (full scheme)
+    expand_prob: 0.10            # (full scheme)
+    insert_prob: 0.15            # (full scheme)
+    t_skew: 2.0                  # (full scheme)
+    shortage_prob: 0.35          # (full scheme)
+
+training:
+  batch_size: 8
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 50000
+  log_every: 10
+  eval_every: 500
+  diag_every: 100
+  grad_clip: 1.0
+  mixed_precision: true
+  # Joint-loss weighting for the tagger / generator heads.
+  lambda_tag: 1.0
+  lambda_gen: 1.0

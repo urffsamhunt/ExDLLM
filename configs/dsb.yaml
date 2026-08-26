@@ -1,0 +1,47 @@
+# DLLM — Diffusion Schrödinger Bridge (DSB) score-based training config.
+#
+# This trains a continuous score network to transport an *input* datapoint
+# (DP1) to an *output* datapoint (DP2) via the SDE
+#     dx_t = beta_t * (DP2 - x_t) dt + sqrt(beta_t) dW_t
+# using denoising score matching against the closed-form bridge score.
+#
+# DP1/DP2 are continuous vectors obtained by mean-pooling a frozen RoBERTa
+# encoder over the input / output text.
+
+model:
+  # Frozen encoder used to embed DP1 (input) and DP2 (output) into vectors.
+  embedder: "roberta-base"
+  max_length: 128
+  # Score network (MLP) hyperparameters.
+  hidden_dim: 512
+  num_layers: 3
+  time_embed_dim: 128
+
+dsb:
+  beta_schedule: "linear"     # "linear" or "cosine"
+  num_steps: 1000
+  beta_min: 0.0001
+  beta_max: 0.02
+
+data:
+  # TSV file, one pair per line:  <input>\t<output>
+  # e.g. translation pairs, dialogue (prompt \t response), etc.
+  train_path: "./data/dsb_pairs.tsv"
+  # Optional held-out pairs for validation.
+  val_path: null
+  # Cache directory for precomputed DP1/DP2 embeddings (avoids re-encoding).
+  cache_dir: "./data/dsb_emb_cache"
+
+training:
+  batch_size: 32
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 20000
+  log_every: 10
+  eval_every: 500
+  grad_clip: 1.0
+
+inference:
+  # Reverse-SDE steps at generation time.
+  sample_steps: 200

@@ -214,6 +214,7 @@ class DLLM(nn.Module):
         attention_mask: torch.Tensor,      # (batch, seq_len)
         tag_labels: Optional[torch.Tensor] = None,  # (batch, seq_len) — for teacher forcing
         prompt_mask: Optional[torch.Tensor] = None, # (batch, seq_len) — True on prompt positions
+        gen_mask: Optional[torch.Tensor] = None,    # (batch, seq_len) — bool, positions needing generation
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the two-headed model.
@@ -229,9 +230,16 @@ class DLLM(nn.Module):
                         If None, pools over all non-padding positions.
 
         Returns:
-            Dict with:
+            dict with:
                 tag_logits: (batch, seq_len, num_edit_tags) — Tagger output
-                gen_logits: (batch, seq_len, vocab_size) — Generator output
+                gen_logits: Generator output.
+                    Training (gen_mask given, self.training): (N, V) gathered
+                        only at the positions that need generation — avoids
+                        ever materializing the full (B, S, V) tensor, which is
+                        the dominant memory footprint that OOMs XPU/large-vocab.
+                    Otherwise: (batch, seq_len, vocab_size).
+                gen_positions: (N, 2) int tensor of (b, s) indices corresponding
+                    to collected gen_logits rows (None when full logits).
                 length_logits: (batch, length_head_max) — Length head output
                 hidden_states: (batch, seq_len, hidden_dim) — For analysis
         """
@@ -274,12 +282,27 @@ class DLLM(nn.Module):
         tag_embeds = self.tag_embedding(safe_indices)  # (B, S, H)
         conditioned_hidden = hidden_states + tag_embeds     # (B, S, H)
 
-        # Project to vocabulary
-        gen_logits = self.generator_head(conditioned_hidden)  # (B, S, V_orig)
+        # Project to vocabulary. When training with an explicit gen_mask we gather
+        # ONLY the rows that need generation (REPLACE/INSERT positions) and project
+        # that small (N, V) set instead of the full (B, S, V) logits, which is the
+        # dominant tensor and the common cause of OUT_OF_HOST_MEMORY on XPU/Arc.
+        gen_positions = None
+        if gen_mask is not None and self.training:
+            if gen_mask.dtype != torch.bool:
+                gen_mask = gen_mask.bool()
+            gen_positions = gen_mask.nonzero()  # (N, 2)
+            if gen_positions.shape[0] > 0:
+                sel = conditioned_hidden[gen_positions[:, 0], gen_positions[:, 1]]  # (N, H)
+                gen_logits = self.generator_head(sel)  # (N, V)
+            else:
+                gen_logits = conditioned_hidden.new_zeros(0, self.vocab_size)
+        else:
+            gen_logits = self.generator_head(conditioned_hidden)  # (B, S, V)
 
         return {
             "tag_logits": tag_logits,
             "gen_logits": gen_logits,
+            "gen_positions": gen_positions,
             "length_logits": length_logits,
             "hidden_states": hidden_states,
         }
@@ -324,20 +347,25 @@ class DLLM(nn.Module):
             weight = self._tag_weights.to(tag_logits.device)
         tag_loss = F.cross_entropy(tag_logits, tag_indices, weight=weight)
 
-        # Generator loss: only at positions flagged by gen_mask
-        gen_logits = outputs["gen_logits"]  # (B, S, V_orig)
-
-        # Mask out non-generation positions
+        # Generator loss: only at positions flagged by gen_mask. During training
+        # forward() returns gathered (N, V) logits + a positions index (see forward)
+        # so the huge full-vocab (B, S, V) tensor is never materialized.
+        gen_logits = outputs["gen_logits"]  # (B, S, V) or gathered (N, V)
+        gen_positions = outputs.get("gen_positions", None)
         active_gen_mask = gen_mask & (gen_labels != -100)
         if active_gen_mask.sum() > 0:
-            # Flatten for CrossEntropy
-            gen_logits_flat = gen_logits[active_gen_mask]  # (N, V_orig)
-            gen_labels_flat = gen_labels[active_gen_mask]  # (N,)
-
+            if gen_positions is not None:
+                # Gathered mode: gen_logits already only covers the rows whose
+                # (b,s) is in gen_positions; restrict to those that are active.
+                keep = active_gen_mask[gen_positions[:, 0], gen_positions[:, 1]]
+                gen_logits_p = gen_logits[keep]
+                gen_labels_p = gen_labels[gen_positions[:, 0], gen_positions[:, 1]][keep]
+            else:
+                gen_logits_p = gen_logits[active_gen_mask]
+                gen_labels_p = gen_labels[active_gen_mask]
             # Clamp gen_labels to be within original vocab (safety)
-            gen_labels_flat = gen_labels_flat.clamp(0, self.original_vocab_size - 1)
-
-            gen_loss = self.gen_loss_fn(gen_logits_flat, gen_labels_flat)
+            gen_labels_p = gen_labels_p.clamp(0, self.original_vocab_size - 1)
+            gen_loss = self.gen_loss_fn(gen_logits_p, gen_labels_p)
         else:
             gen_loss = torch.tensor(0.0, device=tag_loss.device)
 
@@ -380,12 +408,22 @@ class DLLM(nn.Module):
         # which are trivially easy and mask the content-quality signal.
         gen_resp_loss = None
         if prompt_mask is not None:
-            active_resp = active_gen_mask & ~prompt_mask
-            if active_resp.sum() > 0:
-                with torch.no_grad():
-                    gl = gen_logits[active_resp]
-                    lb = gen_labels[active_resp].clamp(0, self.original_vocab_size - 1)
-                    gen_resp_loss = F.cross_entropy(gl, lb).item()
+            if gen_positions is not None:
+                active_resp = (active_gen_mask & ~prompt_mask)
+                if active_resp.sum() > 0:
+                    keep = active_resp[gen_positions[:, 0], gen_positions[:, 1]]
+                    with torch.no_grad():
+                        gl = gen_logits[keep]
+                        lb = gen_labels[gen_positions[:, 0], gen_positions[:, 1]][keep]
+                        lb = lb.clamp(0, self.original_vocab_size - 1)
+                        gen_resp_loss = F.cross_entropy(gl, lb).item()
+            else:
+                active_resp = active_gen_mask & ~prompt_mask
+                if active_resp.sum() > 0:
+                    with torch.no_grad():
+                        gl = gen_logits[active_resp]
+                        lb = gen_labels[active_resp].clamp(0, self.original_vocab_size - 1)
+                        gen_resp_loss = F.cross_entropy(gl, lb).item()
 
         total_loss = tag_loss + gen_loss + len_loss
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import math
 import random
+import threading
 from typing import Dict, Optional, Callable
 import torch
 import torch.nn as nn
@@ -21,7 +22,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
-from .utils import JSONMetricsLogger
+from .utils import JSONMetricsLogger, to_cpu, resolve_device
 
 
 class DLLMTrainer:
@@ -49,10 +50,15 @@ class DLLMTrainer:
 
         # Determine device
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.device = resolve_device()
         else:
             self.device = device
         self.model.to(self.device)
+        # bf16 autocast halves the dominant transient memory (the huge
+        # (B, S, V) generator logits and activations), which is what pushes
+        # XPU's shared host DRAM / CUDA over the limit on backward(). bf16
+        # needs no loss scaler, so it is safe on both xpu and cuda.
+        self.use_amp = self.device in ("cuda", "xpu")
 
         # Training hyperparameters
         self.batch_size = int(config["training"]["batch_size"])
@@ -66,6 +72,11 @@ class DLLMTrainer:
         self.scheduled_sampling_prob = float(
             config["training"].get("scheduled_sampling_prob", 0.3)
         )
+        # Cap the number of batches evaluated per `eval_every` step (None = full
+        # validation set). Pretraining points the val dataset at the same large
+        # file as training, so an unbounded evaluation would loop over the whole
+        # corpus every few hundred steps and look like a freeze.
+        self.val_max_batches = config["training"].get("val_max_batches", None)
 
         # Sub-iteration trajectory training config
         sub_iters_cfg = config["training"].get("sub_iterations", None)
@@ -90,6 +101,7 @@ class DLLMTrainer:
         self.current_epoch = 0
         self.best_val_loss = float("inf")
         self.metrics_logger = None
+        self._save_threads = []  # in-flight async checkpoint writes
 
     def _setup_optimizer(self):
         """Initialize AdamW optimizer with proper weight decay grouping."""
@@ -201,22 +213,30 @@ class DLLMTrainer:
                         noisy_ids = sub_batch["noisy_ids"]
 
                     # Forward pass
-                    outputs = self.model(
-                        noisy_ids=noisy_ids,
-                        attention_mask=sub_batch["attention_mask"],
-                        tag_labels=sub_batch["tag_labels"],
-                        prompt_mask=sub_batch["prompt_mask"],
+                    autocast_ctx = (
+                        torch.autocast(device_type=self.device, dtype=torch.bfloat16)
+                        if self.use_amp
+                        else torch.nullcontext()
                     )
+                    with autocast_ctx:
+                        outputs = self.model(
+                            noisy_ids=noisy_ids,
+                            attention_mask=sub_batch["attention_mask"],
+                            tag_labels=sub_batch["tag_labels"],
+                            prompt_mask=sub_batch["prompt_mask"],
+                            gen_mask=sub_batch["gen_mask"],
+                        )
 
                     # Compute loss
-                    loss, loss_dict = self.raw_model.compute_loss(
-                        outputs=outputs,
-                        tag_labels=sub_batch["tag_labels"],
-                        gen_labels=sub_batch["gen_labels"],
-                        gen_mask=sub_batch["gen_mask"],
-                        resp_length=sub_batch["resp_length"],
-                        prompt_mask=sub_batch["prompt_mask"],
-                    )
+                    with autocast_ctx:
+                        loss, loss_dict = self.raw_model.compute_loss(
+                            outputs=outputs,
+                            tag_labels=sub_batch["tag_labels"],
+                            gen_labels=sub_batch["gen_labels"],
+                            gen_mask=sub_batch["gen_mask"],
+                            resp_length=sub_batch["resp_length"],
+                            prompt_mask=sub_batch["prompt_mask"],
+                        )
 
                     # Scale loss: by stage weight and gradient accumulation steps.
                     # stage_weights are normalized (sum to 1), so the total gradient
@@ -319,6 +339,10 @@ class DLLMTrainer:
 
         progress_bar.close()
 
+        # Wait for any in-flight checkpoint writes to finish before returning.
+        for t in self._save_threads:
+            t.join()
+
         if self.metrics_logger is not None:
             self.metrics_logger.close()
             self.metrics_logger = None
@@ -417,7 +441,9 @@ class DLLMTrainer:
         total_gen_loss = 0.0
         num_batches = 0
 
-        for batch in val_loader:
+        for i, batch in enumerate(val_loader):
+            if self.val_max_batches is not None and i >= self.val_max_batches:
+                break
             batch = {k: v.to(self.device) for k, v in batch.items()}
             if not batch:
                 continue
@@ -459,15 +485,22 @@ class DLLMTrainer:
     # ── Checkpointing ─────────────────────────────────────────────────
 
     def save_checkpoint(self, path: str, metrics: Optional[Dict] = None):
-        """Save model, optimizer, and training state."""
+        """
+        Save model, optimizer, and training state.
+
+        State dicts are snapshotted to CPU on the calling thread (fast, and
+        immutable once detached), then serialized + written to disk on a
+        background thread so the training loop is not blocked by the slow
+        checkpoint write.
+        """
         # The generator projection shares the embedding parameter; drop the
         # duplicate state-dict key to halve the checkpoint size.
         model_state = self.raw_model.state_dict()
         model_state.pop("generator_head.4.weight", None)
         checkpoint = {
-            "model_state_dict": model_state,
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict(),
+            "model_state_dict": to_cpu(model_state),
+            "optimizer_state_dict": to_cpu(self.optimizer.state_dict()),
+            "scheduler_state_dict": to_cpu(self.scheduler.state_dict()),
             "global_step": self.global_step,
             "current_epoch": self.current_epoch,
             "best_val_loss": self.best_val_loss,
@@ -476,6 +509,15 @@ class DLLMTrainer:
         if metrics:
             checkpoint["metrics"] = metrics
 
+        writer = threading.Thread(
+            target=self._write_checkpoint, args=(checkpoint, path), daemon=True
+        )
+        self._save_threads.append(writer)
+        writer.start()
+        print(f"Checkpoint save started for {path}")
+
+    def _write_checkpoint(self, checkpoint: dict, path: str):
+        """Serialize and write a checkpoint on a background thread."""
         torch.save(checkpoint, path)
         print(f"Checkpoint saved to {path}")
 

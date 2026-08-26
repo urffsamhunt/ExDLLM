@@ -13,7 +13,7 @@ import json
 import random
 import torch
 import numpy as np
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 class JSONMetricsLogger:
@@ -54,6 +54,49 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
+def to_cpu(obj):
+    """
+    Recursively move all tensors in a nested structure to CPU (detached).
+
+    Used to snapshot a checkpoint's state dicts before writing them on a
+    background thread: the copies are immutable, so a concurrent save never
+    races with the next optimizer step, and GPU memory is not held during the
+    (slow) serialization + disk write.
+    """
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().to("cpu")
+    if isinstance(obj, dict):
+        return {k: to_cpu(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(to_cpu(v) for v in obj)
+    return obj
+
+
+def resolve_device(device: Optional[str] = None) -> str:
+    """
+    Resolve the best available compute device.
+
+    Preference order: CUDA GPU > Intel XPU > Apple MPS > CPU. An explicit
+    ``device`` argument is honored as-is; ``None`` (or "auto") triggers
+    auto-detection so the trainer uses an Intel GPU when one is present.
+
+    XPU support requires Intel's ``torch.xpu`` (e.g. the ``pytorch-xpu`` /
+    ``intel_extension_for_pytorch`` builds), so the availability probe is
+    defensive: it only returns "xpu" when the attribute exists and reports
+    a device available.
+    """
+    if device is not None and str(device).lower() not in ("", "auto"):
+        return str(device)
+    if torch.cuda.is_available():
+        return "cuda"
+    xpu = getattr(torch, "xpu", None)
+    if xpu is not None and getattr(xpu, "is_available", lambda: False)():
+        return "xpu"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def expand_sequence(

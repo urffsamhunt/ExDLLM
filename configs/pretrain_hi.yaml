@@ -9,26 +9,29 @@
 # Same structure as pretrain_en.yaml; only the data path differs.
 
 model:
-  backbone: "xlm-roberta-base"
-  hidden_dropout_prob: 0.1
+  backbone: "xlm-roberta-base"   # NOTE: Hindi needs a multilingual tokenizer; roberta-base
+  hidden_dropout_prob: 0.1        # would byte-fallback Devanagari. xlm-roberta-base (~279M)
   attention_probs_dropout_prob: 0.1
   tag_weights: [0.7, 0.8, 1.0, 2.0, 4.0]   # KEEP, DELETE, REPLACE, INSERT, EXPAND
   len_smoothing: 0.15
 
 tokenizer:
-  base: "xlm-roberta-base"
+  base: "xlm-roberta-base"   # keep multilingual for Devanagari
   max_length: 192
 
 training:
-  batch_size: 2               # XLM-R (250k vocab, 471M params) is memory-heavy on 8GB
+  batch_size: 1               # XLM-R (250k vocab, 471M params) is memory-heavy;
+                              # 1 keeps the shared-DRAM XPU / common 8GB from OOMing.
   learning_rate: 0.00005
   weight_decay: 0.01
   warmup_steps: 500
   max_steps: 50000
-  gradient_accumulation_steps: 8   # effective batch stays 16
+  gradient_accumulation_steps: 2   # reduced from 8 (see pretrain_en.yaml)
   log_every: 10
   eval_every: 500
   scheduled_sampling_prob: 0.0     # no self-draft during unconditional pretraining
+  # See pretrain_en.yaml — cap validation batches to keep eval cheap.
+  val_max_batches: 100
 
 data:
   dataset_name: "./data/pretrain_hi.txt"   # plain text, one cleaned Devanagari chunk per line

@@ -43,7 +43,6 @@ import argparse
 import os
 import re
 import unicodedata
-from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
 from datasets import load_dataset
@@ -174,6 +173,13 @@ def main():
                     skipped_docs += 1
             print(f"  Cleaning {len(docs)} docs with {args.num_proc} workers...", flush=True)
             clean = partial(clean_lines, lang=args.lang)
+            # Imported here (not at module scope) so the executor's background
+            # worker thread is only created when parallel mode actually runs,
+            # and is joined+closed before main() returns. Importing
+            # concurrent.futures at import time spawns an internal result-pump
+            # thread that can outlive the interpreter at shutdown and trigger
+            # "Fatal Python error: PyGILState_Release".
+            from concurrent.futures import ProcessPoolExecutor
             with ProcessPoolExecutor(max_workers=args.num_proc) as ex:
                 for n, lines in enumerate(ex.map(clean, docs), 1):
                     emit(lines)
@@ -190,6 +196,14 @@ def main():
                 emit(clean_lines(text, args.lang))
                 if (i + 1) % 20000 == 0:
                     print(f"  {i + 1} docs / {written} lines...", flush=True)
+
+    # Stop the streaming prefetcher gracefully. For streaming=True the dataset
+    # shards are downloaded lazily by a background thread; closing the iterator
+    # (rather than letting the interpreter tear it down mid-fetch) cancels any
+    # in-flight download and avoids shutdown noise like
+    # "[Errno 9] Bad file descriptor" + "Fatal Python error: PyGILState_Release".
+    for fn in getattr(ds, "_ex_iterable", []) if hasattr(ds, "_ex_iterable") else []:
+        getattr(fn, "close", lambda: None)()
 
     print(f"\nDone. Wrote {written} lines -> {args.out} "
           f"(skipped {skipped_docs} empty docs, "

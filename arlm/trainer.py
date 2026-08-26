@@ -11,6 +11,7 @@ diffusion.
 from __future__ import annotations
 
 import os
+import threading
 from typing import Callable, Dict, Optional
 
 import torch
@@ -20,7 +21,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
 from .dataset import build_labels
-from dllm.utils import JSONMetricsLogger
+from dllm.utils import JSONMetricsLogger, to_cpu, resolve_device
 
 
 class ARLMTrainer:
@@ -46,10 +47,14 @@ class ARLMTrainer:
 
         # Determine device
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.device = resolve_device()
         else:
             self.device = device
         self.model.to(self.device)
+        # bf16 autocast halves the dominant transient memory (activations and
+        # the large-vocab logits) which can overflow XPU's shared host DRAM on
+        # backward(). Safe to enable on cuda/xpu; no grad scaler needed for bf16.
+        self.use_amp = self.device in ("cuda", "xpu")
 
         # Training hyperparameters (same keys as the DLLM config)
         self.batch_size = int(config["training"]["batch_size"])
@@ -61,6 +66,9 @@ class ARLMTrainer:
         self.log_every = int(config["training"]["log_every"])
         self.eval_every = int(config["training"]["eval_every"])
         self.pad_id = tokenizer.pad_id
+        # Cap the number of batches evaluated per `eval_every` step (None = full
+        # validation set). See the DLLM trainer for rationale.
+        self.val_max_batches = config["training"].get("val_max_batches", None)
 
         # Setup optimizer and scheduler
         self._setup_optimizer()
@@ -71,6 +79,7 @@ class ARLMTrainer:
         self.current_epoch = 0
         self.best_val_loss = float("inf")
         self.metrics_logger = None
+        self._save_threads = []  # in-flight async checkpoint writes
 
     def _setup_optimizer(self):
         """Initialize AdamW optimizer with proper weight-decay grouping."""
@@ -133,7 +142,13 @@ class ARLMTrainer:
                 attn = batch["attention_mask"].to(self.device)
                 labels = build_labels(ids, attn, self.pad_id).to(self.device)
 
-                loss = self.model(input_ids=ids, attention_mask=attn, labels=labels)["loss"]
+                autocast_ctx = (
+                    torch.autocast(device_type=self.device, dtype=torch.bfloat16)
+                    if self.use_amp
+                    else torch.nullcontext()
+                )
+                with autocast_ctx:
+                    loss = self.model(input_ids=ids, attention_mask=attn, labels=labels)["loss"]
                 loss = loss / self.gradient_accumulation_steps
                 loss.backward()
                 running_loss += loss.item() * self.gradient_accumulation_steps
@@ -189,6 +204,10 @@ class ARLMTrainer:
 
         progress_bar.close()
 
+        # Wait for any in-flight checkpoint writes to finish before returning.
+        for t in self._save_threads:
+            t.join()
+
         if self.metrics_logger is not None:
             self.metrics_logger.close()
             self.metrics_logger = None
@@ -204,7 +223,9 @@ class ARLMTrainer:
         total_loss = 0.0
         num_batches = 0
 
-        for batch in val_loader:
+        for i, batch in enumerate(val_loader):
+            if self.val_max_batches is not None and i >= self.val_max_batches:
+                break
             ids = batch["input_ids"].to(self.device)
             attn = batch["attention_mask"].to(self.device)
             labels = build_labels(ids, attn, self.pad_id).to(self.device)
@@ -223,11 +244,18 @@ class ARLMTrainer:
     # ── Checkpointing ─────────────────────────────────────────────────
 
     def save_checkpoint(self, path: str, metrics: Optional[Dict] = None):
-        """Save model, optimizer, and training state."""
+        """
+        Save model, optimizer, and training state.
+
+        State dicts are snapshotted to CPU on the calling thread (fast, and
+        immutable once detached), then serialized + written to disk on a
+        background thread so the training loop is not blocked by the slow
+        checkpoint write.
+        """
         checkpoint = {
-            "model_state_dict": self.raw_model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict(),
+            "model_state_dict": to_cpu(self.raw_model.state_dict()),
+            "optimizer_state_dict": to_cpu(self.optimizer.state_dict()),
+            "scheduler_state_dict": to_cpu(self.scheduler.state_dict()),
             "global_step": self.global_step,
             "current_epoch": self.current_epoch,
             "best_val_loss": self.best_val_loss,
@@ -235,6 +263,16 @@ class ARLMTrainer:
         }
         if metrics:
             checkpoint["metrics"] = metrics
+
+        writer = threading.Thread(
+            target=self._write_checkpoint, args=(checkpoint, path), daemon=True
+        )
+        self._save_threads.append(writer)
+        writer.start()
+        print(f"Checkpoint save started for {path}")
+
+    def _write_checkpoint(self, checkpoint: dict, path: str):
+        """Serialize and write a checkpoint on a background thread."""
         torch.save(checkpoint, path)
         print(f"Checkpoint saved to {path}")
 

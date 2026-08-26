@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import collections
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional, List, Tuple
 import torch
 from torch.utils.data import Dataset
@@ -28,6 +29,49 @@ from datasets import load_dataset
 TINY_SHAKESPEARE_URL = (
     "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
 )
+
+
+def _tokenize_all(
+    tokenizer,
+    texts: List[str],
+    num_threads: int = 4,
+    max_length: Optional[int] = None,
+) -> List[List[int]]:
+    """
+    Tokenize a list of texts, optionally in parallel.
+
+    The underlying HF tokenizer is implemented in Rust and releases the GIL
+    while tokenizing, so concurrent ``encode`` calls run in parallel across
+    threads. Results are returned in the same order as ``texts``.
+
+    With ``num_threads <= 1`` (or a tiny input) this falls back to a plain
+    sequential loop, so single-threaded behaviour is unchanged.
+    """
+    if num_threads <= 1 or len(texts) < 2:
+        return [
+            tokenizer.encode(
+                t, add_special_tokens=True, max_length=max_length, truncation=True
+            )
+            for t in texts
+        ]
+    # Preallocate the result list, then fill each slot from its future. The list
+    # is only ``None`` transiently during construction; every index is assigned
+    # before ``_tokenize_all`` returns.
+    out: List[List[int]] = [None] * len(texts)  # type: ignore[list-item]
+    with ThreadPoolExecutor(max_workers=num_threads) as ex:
+        futures = {
+            i: ex.submit(
+                tokenizer.encode,
+                t,
+                add_special_tokens=True,
+                max_length=max_length,
+                truncation=True,
+            )
+            for i, t in enumerate(texts)
+        }
+        for i, f in futures.items():
+            out[i] = f.result()
+    return out
 
 
 class DLLMDataset(Dataset):
@@ -52,6 +96,7 @@ class DLLMDataset(Dataset):
         text_file: Optional[str] = None,
         cache_dir: str = "./data",
         sub_iterations: Optional[List[float]] = None,
+        num_threads: int = 4,
     ):
         """
         Args:
@@ -70,7 +115,12 @@ class DLLMDataset(Dataset):
                 (e.g. [1.0, 0.8, 0.6, 0.4, 0.2]). When set, __getitem__ returns
                 tensors of shape (K, max_length) instead of (max_length,). Use
                 only for the training dataset; set to None for validation.
+            num_threads: Number of threads to use when tokenizing during dataset
+                construction (e.g. _chunk_text). Defaults to 4. Set to 1 for a
+                purely sequential build. The underlying HF tokenizer releases the
+                GIL while tokenizing, so threads give a near-linear speedup.
         """
+        self.num_threads = num_threads
         self.tokenizer = tokenizer
         self.corruptor = corruptor
         self.max_length = max_length
@@ -153,31 +203,53 @@ class DLLMDataset(Dataset):
         """
         Split long text into chunks suitable for tokenization.
         Merges lines until each chunk has at least min_tokens.
+
+        The heaviest cost is tokenization, which is done once per line, in
+        parallel (see ``_tokenize_all`` / ``self.num_threads``). Each line is
+        tokenized once; the merge pass is then a cheap loop over the resulting
+        token-ID lists, so joining a short line onto a buffer never re-encodes
+        anything.
         """
-        # Split on newlines
         lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if not lines:
+            return []
 
-        # Merge lines into chunks of at least min_tokens
+        # Tokenize every line once, in parallel.
+        encoded = _tokenize_all(
+            self.tokenizer,
+            lines,
+            num_threads=self.num_threads,
+            max_length=self.max_length,
+        )
+
+        # Greedy merge: accumulate line token-ID lists until enough tokens
+        # accumulate, then emit the joined text and reset. This mirrors the
+        # original "merge lines until >= min_tokens" rule without re-encoding.
         chunks = []
-        buffer = ""
-        for line in lines:
-            candidate = f"{buffer} {line}".strip() if buffer else line
-            tokens = self.tokenizer.encode(candidate)
-            if len(tokens) >= min_tokens:
-                chunks.append(candidate)
-                buffer = ""
-            else:
-                buffer = candidate
+        run_ids = []
+        run_start = 0
+        for i, toks in enumerate(encoded):
+            run_ids += toks
+            if len(run_ids) >= min_tokens:
+                chunks.append(" ".join(lines[run_start:i + 1]))
+                run_ids = []
+                run_start = i + 1
+        # Flush remaining buffer as the final (possibly short) chunk.
+        if run_ids:
+            chunks.append(" ".join(lines[run_start:]))
 
-        # Flush remaining buffer into last chunk or as standalone
-        if buffer:
-            if chunks:
-                chunks[-1] = f"{chunks[-1]} {buffer}".strip()
-            else:
-                chunks.append(buffer)
-
-        # Filter out chunks that are still too short after encoding
-        chunks = [c for c in chunks if len(self.tokenizer.encode(c)) >= 8]
+        # Filter out chunks that are still too short after encoding.
+        if len(chunks) > 1:
+            lens = [
+                len(t)
+                for t in _tokenize_all(
+                    self.tokenizer,
+                    chunks,
+                    num_threads=self.num_threads,
+                    max_length=self.max_length,
+                )
+            ]
+            chunks = [c for c, ln in zip(chunks, lens) if ln >= 8]
 
         return chunks
 

@@ -6,3 +6,9 @@ __pycache__
 data
 graphify-out/cache/
 a.txt
+
+# Model checkpoints (large binaries)
+*.pt
+
+# Checkpoint directories (metrics + binaries)
+checkpoints_*/

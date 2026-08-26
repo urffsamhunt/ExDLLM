@@ -74,17 +74,24 @@ class ARLMDataset(Dataset):
         )
         self._pairs: List[Tuple[str, str]] = list(pairs_ds._text_lines)
 
-        # Tokenize each pair into a single teacher-forced sequence.
-        self._seqs: List[List[int]] = []
-        for prompt_turn, response_turn in self._pairs:
-            ids = tokenizer.encode(
-                f"{prompt_turn} {response_turn}".strip(),
-                add_special_tokens=True,
-                max_length=max_length,
-                truncation=True,
-            )
-            if len(ids) >= 8:
-                self._seqs.append(ids)
+        # Batch-encode all pairs in a single call (far faster than a per-item
+        # Python loop of individual encode() calls). padding=False keeps each
+        # sequence at its natural length; the collate fn pads per batch.
+        texts = [
+            f"{prompt_turn} {response_turn}".strip()
+            for prompt_turn, response_turn in self._pairs
+        ]
+        encoded = tokenizer(
+            texts,
+            padding=False,
+            truncation=True,
+            max_length=max_length,
+            add_special_tokens=True,
+            return_tensors=None,
+        )
+        self._seqs: List[List[int]] = [
+            ids for ids in encoded["input_ids"] if len(ids) >= 8
+        ]
 
     def __len__(self) -> int:
         return len(self._seqs)

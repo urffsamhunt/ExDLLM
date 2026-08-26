@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument("--config", type=str, default="configs/arlm.yaml",
                         help="Path to YAML config file")
     parser.add_argument("--device", type=str, default=None,
-                        help="Device to train on (cuda/cpu)")
+                        help="Device to train on (cuda/xpu/mps/cpu; default: auto-detect)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
     parser.add_argument("--save_dir", type=str, default="./models_ar",
@@ -140,10 +140,14 @@ def main():
     if args.max_steps:
         config["training"]["max_steps"] = args.max_steps
 
-    # Multi-GPU: wrap in DataParallel (batch is split across devices).
+    # Multi-GPU: wrap in DataParallel (batch is split across devices). Only
+    # CUDA supports it here; Intel XPU / Apple MPS expose a single device.
     n_gpu = args.n_gpu or torch.cuda.device_count()
     print(f"Detected {torch.cuda.device_count()} GPU(s)")
-    if n_gpu > 1:
+    if args.n_gpu and n_gpu > 1 and not torch.cuda.is_available():
+        print("Warning: --n_gpu given but CUDA unavailable; running on a single device.")
+        n_gpu = 1
+    if n_gpu > 1 and torch.cuda.is_available():
         model = nn.DataParallel(model, device_ids=list(range(n_gpu)))
         print(f"Using DataParallel across {n_gpu} GPUs (batch split {config['training']['batch_size'] // n_gpu} per GPU)")
 

@@ -1,0 +1,72 @@
+# DLLM — DSB pretraining for language understanding.
+#
+# Self-supervised denoising objective (no input/output pairs needed):
+#     DP1 = embedding of a *corrupted* (masked/noised) text
+#     DP2 = embedding of the *clean* text
+# The bridge learns to transport DP1 -> DP2, i.e. to reverse corruption,
+# which forces the model to encode language structure.
+#
+# Unlike the translation fine-tuning config, the encoder is TRAINABLE here
+# (train_embedder: true) so the model actually learns representations rather
+# than just the embedding manifold on top of a frozen RoBERTa.
+
+model:
+  embedder: "roberta-base"
+  max_length: 128
+  # Train the encoder jointly with the score network during pretraining.
+  train_embedder: true
+  # Recompute encoder activations on backward instead of storing them. Cuts
+  # activation VRAM dramatically (~a few GB at batch 8 / len 128) at the cost
+  # of ~30% slower forward. Set false if you have a large GPU.
+  gradient_checkpointing: true
+  # Score network (MLP) hyperparameters.
+  hidden_dim: 512
+  num_layers: 3
+  time_embed_dim: 128
+
+dsb:
+  beta_schedule: "linear"     # "linear" or "cosine"
+  num_steps: 1000
+  beta_min: 0.0001
+  beta_max: 0.02
+
+data:
+  # Plain text file, one datapoint (line) per row. No pairing required.
+  # Streamed lazily — only a window of lines is ever in memory.
+  train_path: "./data/pretrain_en.txt"
+  # Optional held-out plain-text file for validation (also streamed, capped).
+  val_path: null
+  # Lines materialized at once for in-memory shuffle during streaming.
+  shuffle_buffer: 100000
+  # Max batches evaluated per checkpoint (keeps streaming eval cheap).
+  val_max_batches: 100
+  # Cache directory for tokenized text (embeddings are NOT cached here because
+  # the encoder is trainable, so embeddings change every step).
+  cache_dir: "./data/dsb_pretrain_cache"
+  corruption:
+    mask_prob: 0.15          # fraction of real tokens to corrupt
+    mask_ratio: 0.8          # of corrupted tokens, fraction that become [MASK]
+    noise_vocab_size: 100    # top-N tokens used as random noise for the rest
+
+training:
+  # Small batch: roberta-base end-to-end is memory-hungry on a ~5.65GB A380.
+  # Raise only if VRAM allows (original DLLM uses 8 for roberta on this GPU).
+  batch_size: 16
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 50000
+  log_every: 10
+  eval_every: 500
+  # Expensive interpretability diagnostics (baseline/signal/reconstruction)
+  # run every `diag_every` steps, not every log step — reconstruction_error
+  # runs a full reverse SDE.
+  diag_every: 100
+  recon_steps: 0          # reverse-SDE steps for recon_err; 0 = bridge default (1000)
+  grad_clip: 1.0
+  # Mixed precision (fp16/bfloat16) roughly halves activation + state memory.
+  mixed_precision: true
+
+inference:
+  # Reverse-SDE steps at generation time.
+  sample_steps: 200
