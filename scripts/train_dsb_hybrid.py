@@ -237,6 +237,11 @@ def train(args, config):
     print(f"Trainable parameters: {n_params:,}")
 
     tcfg = config["training"]
+    # How often the expensive interpretability diagnostics (baseline/signal/
+    # reconstruction) run — every `diag_every` steps, not every log step,
+    # because reconstruction_error runs a full reverse SDE and is costly.
+    diag_every = int(tcfg.get("diag_every", 100))
+    recon_steps = int(tcfg.get("recon_steps", 0)) or None  # 0 -> bridge default
     amp_dtype = None
     if tcfg.get("mixed_precision", True):
         if torch.cuda.is_available() or device.type == "cuda":
@@ -294,6 +299,18 @@ def train(args, config):
                 print(f"step {global_step}/{total}  total {loss.item():.4f}  "
                       f"[sm {loss_dict['score_matching']:.3f} tag {loss_dict['tag']:.3f} "
                       f"gen {loss_dict['gen']:.3f}]  lr {scheduler.get_last_lr()[0]:.2e}")
+
+                # Expensive interpretability diagnostics (baseline / signal /
+                # full reverse-SDE reconstruction) — run every `diag_every`
+                # steps. Uses the hybrid's bridge (same SDE machinery).
+                if global_step % diag_every == 0:
+                    with torch.no_grad():
+                        bl = hybrid.bridge.baseline_loss(dp1)
+                        sig = hybrid.bridge.signal_captured(dp1, dp2)
+                        recon = hybrid.bridge.reconstruction_error(dp1, dp2, steps=recon_steps)
+                    print(f"  [diag] baseline {bl.item():.4f}, "
+                          f"signal {sig[2]*100:.1f}%, "
+                          f"recon_err {recon.item():.4f}")
 
             if global_step % tcfg["eval_every"] == 0:
                 val_loss = loss.item()

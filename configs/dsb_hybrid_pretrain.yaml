@@ -58,6 +58,7 @@ training:
   log_every: 10
   eval_every: 500
   diag_every: 100
+  recon_steps: 0          # reverse-SDE steps for recon_err; 0 = bridge default (1000)
   grad_clip: 1.0
   mixed_precision: true
   # Joint-loss weighting for the tagger / generator heads.
