@@ -65,4 +65,7 @@ training:
   mixed_precision: true
   # Joint-loss weighting for the tagger / generator heads.
   lambda_tag: 1.0
-  lambda_gen: 1.0
+  # The generator CE (~7 early) dwarfs the score-matching loss (~0.65); its
+  # gradients reach the shared encoder through x_t <- dp1, starving the score
+  # net. 0.1 keeps the heads learning without dominating the encoder.
+  lambda_gen: 0.1

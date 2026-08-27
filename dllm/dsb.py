@@ -376,39 +376,45 @@ class DiffSchrodingerBridge(nn.Module):
         return_trajectory: bool = False,
     ) -> torch.Tensor:
         """
-        Reverse the SDE from DP1 toward DP2 using the learned score.
+        Generate DP2 from DP1 by integrating the bridge FORWARD in time.
 
-        Reverse SDE (Euler-Maruyama), stepping t from 1 down to 0:
-            dx = [ f(x, t) - sigma_t^2 s_theta(x, t) ] dt + sqrt(beta_t) dW
-        with f(x, t) = beta_t * (DP2_est - x) the forward drift evaluated at
-        the score-recovered target.
+        The bridge is pinned at DP1 (t=0, sigma^2~0) and pulled toward DP2
+        (t=1). Generation therefore integrates the forward SDE from t=0 to
+        t=1, replacing the unknown DP2 in the drift with its score-based
+        estimate at each step, and returns the final target estimate (not the
+        noisy terminal state x, whose marginal variance sigma^2(1)~0.5 is
+        large).
+
+        (The previous version evaluated coefficients at t going 1 -> 0 while
+        integrating the state forward, which started the trajectory at an
+        off-distribution point — DP1 is not a sample of N(DP2, 0.5 I) — and
+        made reconstruction_error worse than the identity baseline.)
 
         Args:
             dp1: (B, D) or (B, S, D) input.
-            steps: number of reverse steps (defaults to num_steps).
+            steps: number of integration steps (defaults to num_steps).
             return_trajectory: if True, return all intermediate states.
 
         Returns:
-            (B, D) or (B, S, D) generated output, or (steps+1, B, ...) if
+            (B, D) or (B, S, D) estimated DP2, or (steps+1, B, ...) if
             return_trajectory.
         """
         steps = steps or self.num_steps
         dt = 1.0 / steps
         x = dp1.clone()
         traj = [x]
+        dp2_est = dp1.clone()
         for i in range(steps):
-            t = torch.full((x.shape[0],), 1.0 - (i + 0.5) * dt, device=x.device)
-            s = self.score_predict(x, t, dp1=dp1)
+            t = torch.full((x.shape[0],), (i + 0.5) * dt, device=x.device)
             sigma2_t = self._sigma2_at(t).reshape(-1, 1, 1) if x.dim() == 3 else self._sigma2_at(t).reshape(-1, 1)
             beta_t = self._beta_at(t).reshape_as(sigma2_t)
             # Forward drift toward the score-recovered target.
             dp2_est = self._estimate_target(x, t, dp1)
-            f = beta_t * (dp2_est - x)
-            drift = f - sigma2_t * s
+            drift = beta_t * (dp2_est - x)
             noise = torch.randn_like(x)
             x = x + drift * dt + torch.sqrt(beta_t * dt + 1e-8) * noise
             if return_trajectory:
                 traj.append(x.clone())
         if return_trajectory:
             return torch.stack(traj)
-        return x
+        return dp2_est
