@@ -281,15 +281,9 @@ class DSBHybrid(nn.Module):
         B = dp1.shape[0]
         if t is None:
             t = torch.rand(B, device=dp1.device)
-        x_t, score_target = self.bridge.forward_sample(dp1, dp2, t)
-        score_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
-        # sigma^2 weighting (standard denoising score matching).
-        sigma2_t = self.bridge._sigma2_at(t)  # type: ignore[attr-defined]
-        if x_t.dim() == 3:
-            sigma2 = sigma2_t.reshape(-1, 1, 1)
-        else:
-            sigma2 = sigma2_t.reshape(-1, 1)
-        loss_sm = (F.mse_loss(score_pred, score_target, reduction="none") * sigma2).mean()
+        x_t, u_target = self.bridge.forward_sample(dp1, dp2, t)
+        u_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
+        loss_sm = F.mse_loss(u_pred, u_target)
 
         if x_t.dim() != 3:
             # Pooled (non-per-position) embeddings carry no per-token structure,
@@ -387,14 +381,12 @@ class DSBHybrid(nn.Module):
         B = dp1.shape[0]
         if t is None:
             t = torch.rand(B, device=dp1.device)
-        x_t, score_target = self.bridge.forward_sample(dp1, dp2, t)
+        x_t, u_target = self.bridge.forward_sample(dp1, dp2, t)
         if hasattr(self.bridge.score_net, "num_tags"):
-            score_pred = self.bridge.score_predict(x_t, t, dp1=dp1, tag_ids=condition_tags)
+            u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, tag_ids=condition_tags)
         else:
-            score_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
-        sigma2_t = self.bridge._sigma2_at(t)  # type: ignore[attr-defined]
-        sigma2 = sigma2_t.reshape(-1, 1, 1) if x_t.dim() == 3 else sigma2_t.reshape(-1, 1)
-        loss_sm = (F.mse_loss(score_pred, score_target, reduction="none") * sigma2).mean()
+            u_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
+        loss_sm = F.mse_loss(u_pred, u_target)
 
         loss_tag, loss_gen = self.build_edit_loss(x_t, tag_labels, gen_labels)
         total = loss_sm + self.lambda_tag * loss_tag + self.lambda_gen * loss_gen

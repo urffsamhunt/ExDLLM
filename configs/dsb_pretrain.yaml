@@ -13,12 +13,12 @@
 model:
   embedder: "roberta-base"
   max_length: 128
-  # Train the encoder jointly with the score network during pretraining.
-  train_embedder: true
-  # Recompute encoder activations on backward instead of storing them. Cuts
-  # activation VRAM dramatically (~a few GB at batch 8 / len 128) at the cost
-  # of ~30% slower forward. Set false if you have a large GPU.
-  gradient_checkpointing: true
+  # FROZEN. Jointly training the encoder is degenerate: the score-matching
+  # loss rewards making DP2 predictable from DP1 (irreducible term
+  # Var(DP2 | x_t, DP1)/sigma2, amplified at low t), so a trainable encoder
+  # collapses to input-insensitive embeddings. See dsb_hybrid_pretrain.yaml.
+  train_embedder: false
+  gradient_checkpointing: false
   # Score network (MLP) hyperparameters.
   hidden_dim: 512
   num_layers: 3

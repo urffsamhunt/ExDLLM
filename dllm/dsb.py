@@ -243,8 +243,14 @@ class DiffSchrodingerBridge(nn.Module):
         sigma_t = torch.sqrt(sigma2_t + 1e-8)
         z = torch.randn_like(dp1)
         x_t = mu + sigma_t * z
-        score = (mu - x_t) / (sigma2_t + 1e-8)
-        return x_t, score
+        # u-parametrization: predict u = mu - x_t (== -sigma_t * z) instead of
+        # the raw score s = u / sigma2_t. The score spans ~4 orders of magnitude
+        # across t (sigma2: 1e-4 -> 0.5), which a small MLP cannot represent —
+        # the chronic cause of low "signal captured". Since
+        # sigma2 * ||s_pred - s*||^2 == ||u_pred - u*||^2, the u-parametrization
+        # is the SAME objective without the dynamic-range problem.
+        u = mu - x_t
+        return x_t, u
 
     # ── Training loss: denoising score matching ───────────────────────────────
 
@@ -255,12 +261,12 @@ class DiffSchrodingerBridge(nn.Module):
         t: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Denoising score-matching loss for the bridge.
+        Denoising score-matching loss for the bridge, in the u-parametrization.
 
-            L = E_t [ sigma_t^2 * || s_theta(x_t, t) - s(x_t | dp1, dp2) ||^2 ]
+            L = E_t || u_theta(x_t, t, DP1) - (mu_t - x_t) ||^2
 
-        The sigma^2 weighting is the standard denoising score-matching
-        weighting that makes the objective a proper score-matching surrogate.
+        This is exactly the sigma^2-weighted score-matching objective (since
+        u = sigma2 * s), but without the ~1e4 dynamic range of the raw score.
 
         Args:
             dp1: (B, D) or (B, S, D) input.
@@ -273,11 +279,9 @@ class DiffSchrodingerBridge(nn.Module):
         B = dp1.shape[0]
         if t is None:
             t = torch.rand(B, device=dp1.device)
-        x_t, score_target = self.forward_sample(dp1, dp2, t)
-        score_pred = self.score_predict(x_t, t, dp1=dp1)
-        sigma2_t = self._sigma2_at(t).reshape(-1, 1, 1) if x_t.dim() == 3 else self._sigma2_at(t).reshape(-1, 1)
-        loss = F.mse_loss(score_pred, score_target, reduction="none")
-        loss = (loss * sigma2_t).mean()
+        x_t, u_target = self.forward_sample(dp1, dp2, t)
+        u_pred = self.score_predict(x_t, t, dp1=dp1)
+        loss = F.mse_loss(u_pred, u_target)
         return loss
 
     # ── Interpretability diagnostics ──────────────────────────────────────────
@@ -285,19 +289,14 @@ class DiffSchrodingerBridge(nn.Module):
     @torch.no_grad()
     def baseline_loss(self, x_like: torch.Tensor) -> torch.Tensor:
         """
-        The score-matching MSE achieved by the no-signal predictor s = 0.
+        The MSE achieved by the zero predictor in the u-parametrization.
 
-        With s = (mu - x)/sigma^2 and x = mu + sigma*z, the sigma^2-weighted
-        MSE for a zero score is sigma^2 * ||z/sigma||^2 = ||z||^2, so
-        E[baseline] = mean over dimensions of E[z^2] = 1.
-
-        This is the reference point that makes the raw loss interpretable:
-        a loss of ~1.0 means the network is still predicting ~nothing.
-        ``x_like`` supplies only the batch/device/dtype shape.
+        u* = mu - x_t = -sigma_t * z, so the per-dim expected MSE for a zero
+        prediction is E_t[sigma2_t]. This is the reference point that makes
+        the raw loss interpretable: loss ~ baseline means the network is
+        predicting ~nothing; loss -> 0 means it matches the target.
         """
-        z = torch.randn_like(x_like)
-        # sigma^2-weighted MSE with zero prediction == ||z||^2 elementwise mean.
-        return (z ** 2).mean()
+        return self.sigma2.mean()
 
     @torch.no_grad()
     def signal_captured(
@@ -357,14 +356,13 @@ class DiffSchrodingerBridge(nn.Module):
         """
         Recover the (unknown) output DP2 from the learned score.
 
-        The score is s = (mu - x) / sigma^2 with mu = (1 - alpha) DP2 + alpha DP1,
-        so DP2 = (x + sigma^2 s - alpha DP1) / (1 - alpha). This lets the
+        The score net predicts u = mu - x_t (u-parametrization), so
+        mu = x + u, and DP2 = (mu - alpha DP1) / (1 - alpha). This lets the
         reverse drift point along the relative displacement toward the output.
         """
         alpha_t = self._alpha_at(t).reshape(-1, 1, 1) if x.dim() == 3 else self._alpha_at(t).reshape(-1, 1)
-        sigma2_t = self._sigma2_at(t).reshape_as(alpha_t)
-        s = self.score_predict(x, t, dp1=dp1)
-        mu = x + sigma2_t * s
+        u = self.score_predict(x, t, dp1=dp1)
+        mu = x + u
         denom = (1 - alpha_t).clamp(min=1e-3)
         return (mu - alpha_t * dp1) / denom
 

@@ -12,8 +12,14 @@
 model:
   embedder: "xlm-roberta-base"
   max_length: 128
-  train_embedder: true
-  gradient_checkpointing: true
+  # FROZEN. Jointly training the encoder is degenerate here: the score-matching
+  # loss rewards making DP2 predictable from DP1 (its irreducible term is
+  # Var(DP2 | x_t, DP1)/sigma2, amplified at low t), so a trainable encoder
+  # collapses to input-insensitive embeddings (observed: identity baseline
+  # 5.5-9.9 -> 0.003 within 700 steps). The gen/tag heads were only accidentally
+  # preventing this. The bridge operates on the fixed pretrained space instead.
+  train_embedder: false
+  gradient_checkpointing: false
   # Edit-conditioned score network (phase 2): conditions the drift on prior
   # edit tags. Set true when using corruption_scheme "full".
   edit_conditioned_score: false
@@ -63,9 +69,8 @@ training:
   recon_steps: 0          # reverse-SDE steps for recon_err; 0 = bridge default (1000)
   grad_clip: 1.0
   mixed_precision: true
-  # Joint-loss weighting for the tagger / generator heads.
+  # Joint-loss weighting for the tagger / generator heads. With a frozen
+  # encoder these no longer compete with the score net for encoder gradients,
+  # so 1.0 is safe (and the heads learn at full speed).
   lambda_tag: 1.0
-  # The generator CE (~7 early) dwarfs the score-matching loss (~0.65); its
-  # gradients reach the shared encoder through x_t <- dp1, starving the score
-  # net. 0.1 keeps the heads learning without dominating the encoder.
-  lambda_gen: 0.1
+  lambda_gen: 1.0
