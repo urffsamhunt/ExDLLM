@@ -226,10 +226,15 @@ def main():
             print(f"  {t}")
     else:
         # Plain DSB: load score net into a bridge, reverse SDE.
+        # The plain score net is TRAINED on mean-pooled (B, D) embeddings
+        # (train_dsb_pretrain.py embed_ids pools), so DP1 must be pooled too —
+        # feeding per-token embeddings would be out-of-distribution.
         bridge = build_bridge(config, embedder, device)
         bridge.score_net.load_state_dict(ckpt["score_net"])
         bridge.eval()
-        x = bridge.sample(dp1, steps=args.sde_steps)       # (1, S, D) output embedding
+        with torch.no_grad():
+            dp1 = embedder.embed_pool([args.prompt])           # (1, D) pooled
+        x = bridge.sample(dp1, steps=args.sde_steps)           # (1, D) output embedding
 
         corpus_path = args.corpus or config["data"].get("train_path")
         if not corpus_path or not os.path.exists(corpus_path):
@@ -237,8 +242,7 @@ def main():
                 "Plain-DSB decode needs a corpus file (--corpus) to find the nearest "
                 "training sentence to the generated embedding. Pass --corpus data/..."
             )
-        with torch.no_grad():
-            x_pooled = x.mean(dim=1)[0]                    # (D,)
+        x_pooled = x[0]                                        # (D,)
         texts, dists = nearest_texts(embedder, x_pooled, corpus_path, device, k=args.k)
         print("Generated embedding  ->  nearest training sentences (cosine dist):")
         for d, t in zip(dists, texts):

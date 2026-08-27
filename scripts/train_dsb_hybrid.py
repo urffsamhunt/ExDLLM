@@ -71,9 +71,12 @@ class TextEmbedder(nn.Module):
                               return_token_type_ids=False)
 
     def embed_ids(self, input_ids, attention_mask):
+        # Return PER-TOKEN embeddings (B, S, D), not mean-pooled. The DSBHybrid
+        # discrete tagger/generator heads operate on per-position structure, so
+        # pooling to (B, D) would make x_t 2-D and silently skip the edit heads
+        # (see DSBHybrid.loss: it returns score-matching only when x_t.dim()!=3).
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        mask = attention_mask.unsqueeze(-1).float()
-        return (out.last_hidden_state * mask).sum(1) / mask.sum(1).clamp(min=1.0)
+        return out.last_hidden_state  # (B, S, D)
 
 
 # ── Streaming reader (never loads the whole corpus) ─────────────────────────
