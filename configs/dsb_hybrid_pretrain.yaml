@@ -29,6 +29,8 @@ dsb:
   num_steps: 1000
   beta_min: 0.0001
   beta_max: 0.02
+  # Condition the score net on the source endpoint DP1 (see dsb_pretrain.yaml).
+  condition_on_dp1: true
 
 data:
   train_path: "./data/pretrain_en.txt"

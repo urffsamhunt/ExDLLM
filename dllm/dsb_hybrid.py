@@ -71,10 +71,12 @@ class EditConditionedScoreNet(nn.Module):
         hidden_dim: int = 512,
         num_layers: int = 3,
         time_embed_dim: int = 128,
+        cond_dim: int = 0,
     ):
         super().__init__()
         self.dim = dim
         self.num_tags = num_tags
+        self.cond_dim = cond_dim
         self.time_embed_dim = time_embed_dim
         self.tag_emb = nn.Embedding(num_tags + 1, dim)  # +1 for a 'none' sentinel
         self.time_mlp = nn.Sequential(
@@ -83,7 +85,7 @@ class EditConditionedScoreNet(nn.Module):
             nn.Linear(time_embed_dim, time_embed_dim),
             nn.SiLU(),
         )
-        in_dim = dim + dim + time_embed_dim  # x + tag_emb + time
+        in_dim = dim + cond_dim + dim + time_embed_dim  # cond + x + tag_emb + time
         layers = []
         for _ in range(num_layers):
             layers.append(nn.Linear(in_dim, hidden_dim))
@@ -93,9 +95,11 @@ class EditConditionedScoreNet(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor,
-                tag_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
+                tag_ids: Optional[torch.Tensor] = None,
+                cond: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        x: (B, S, D) or (B, D); t: (B,); tag_ids: (B, S) int64 (default: sentinel).
+        x: (B, S, D) or (B, D); t: (B,); tag_ids: (B, S) int64 (default: sentinel);
+        cond: optional conditioning with the same shape as x (e.g. DP1).
         """
         t_b = t.reshape(-1, 1)
         t_emb = self.time_mlp(t_b)  # (B, time_embed_dim)
@@ -113,6 +117,10 @@ class EditConditionedScoreNet(nn.Module):
                                      dtype=torch.long, device=x.device)
             tag_e = self.tag_emb(tag_ids)  # (B, D)
             h = torch.cat([x, tag_e, t_emb], dim=-1)
+        if self.cond_dim > 0:
+            if cond is None:
+                raise ValueError("score net built with cond_dim > 0 requires cond")
+            h = torch.cat([cond, h], dim=-1)
         return self.net(h)
 
 
@@ -274,7 +282,7 @@ class DSBHybrid(nn.Module):
         if t is None:
             t = torch.rand(B, device=dp1.device)
         x_t, score_target = self.bridge.forward_sample(dp1, dp2, t)
-        score_pred = self.bridge.score_net(x_t, t)
+        score_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
         # sigma^2 weighting (standard denoising score matching).
         sigma2_t = self.bridge._sigma2_at(t)  # type: ignore[attr-defined]
         if x_t.dim() == 3:
@@ -381,9 +389,9 @@ class DSBHybrid(nn.Module):
             t = torch.rand(B, device=dp1.device)
         x_t, score_target = self.bridge.forward_sample(dp1, dp2, t)
         if hasattr(self.bridge.score_net, "num_tags"):
-            score_pred = self.bridge.score_net(x_t, t, tag_ids=condition_tags)
+            score_pred = self.bridge.score_predict(x_t, t, dp1=dp1, tag_ids=condition_tags)
         else:
-            score_pred = self.bridge.score_net(x_t, t)
+            score_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
         sigma2_t = self.bridge._sigma2_at(t)  # type: ignore[attr-defined]
         sigma2 = sigma2_t.reshape(-1, 1, 1) if x_t.dim() == 3 else sigma2_t.reshape(-1, 1)
         loss_sm = (F.mse_loss(score_pred, score_target, reduction="none") * sigma2).mean()

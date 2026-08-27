@@ -204,20 +204,24 @@ def train(args, config):
     noise_pool = list(range(4, min(mcf.get("noise_vocab_size", 100) + 4,
                                    tokenizer.vocab_size)))
 
+    cond_on_dp1 = bool(config["dsb"].get("condition_on_dp1", False))
     # Score net: MLP by default, edit-conditioned if config asks.
     if mcfg.get("edit_conditioned_score", False):
         score_net = EditConditionedScoreNet(
             dim=dim, num_tags=5, hidden_dim=mcfg["hidden_dim"],
             num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
+            cond_dim=dim if cond_on_dp1 else 0,
         )
     else:
         score_net = MLPScoreNet(dim=dim, hidden_dim=mcfg["hidden_dim"],
-                                num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"])
+                                num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
+                                cond_dim=dim if cond_on_dp1 else 0)
     bridge = DiffSchrodingerBridge(
         dim=dim, score_net=score_net,
         beta_schedule=config["dsb"]["beta_schedule"],
         num_steps=config["dsb"]["num_steps"],
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
+        condition_on_dp1=cond_on_dp1,
     ).to(device)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
@@ -326,9 +330,14 @@ def train(args, config):
                         bl = hybrid.bridge.baseline_loss(dp1)
                         sig = hybrid.bridge.signal_captured(dp1, dp2)
                         recon = hybrid.bridge.reconstruction_error(dp1, dp2, steps=recon_steps)
+                        # Identity baseline: ||DP2 - DP1||. recon_err at or above
+                        # this means the bridge is not transporting at all (it
+                        # would do no worse than returning the input unchanged).
+                        ident = (dp2 - dp1).norm(dim=-1).mean()
                     print(f"  [diag] baseline {bl.item():.4f}, "
                           f"signal {sig[2]*100:.1f}%, "
-                          f"recon_err {recon.item():.4f}")
+                          f"recon_err {recon.item():.4f} "
+                          f"(identity {ident.item():.4f})")
 
             if global_step % tcfg["eval_every"] == 0:
                 val_loss = loss.item()

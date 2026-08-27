@@ -173,11 +173,13 @@ def train(args, config):
     # by `load_lines` (2.9M Python str objects) + `tokenize` (dense (N, S) tensor)
     # holding the entire 775MB / 2.9M-line corpus in memory.
 
+    cond_on_dp1 = bool(config["dsb"].get("condition_on_dp1", False))
     score_net = MLPScoreNet(
         dim=dim,
         hidden_dim=config["model"]["hidden_dim"],
         num_layers=config["model"]["num_layers"],
         time_embed_dim=config["model"]["time_embed_dim"],
+        cond_dim=dim if cond_on_dp1 else 0,
     ).to(device)
 
     bridge = DiffSchrodingerBridge(
@@ -187,6 +189,7 @@ def train(args, config):
         num_steps=config["dsb"]["num_steps"],
         beta_min=config["dsb"]["beta_min"],
         beta_max=config["dsb"]["beta_max"],
+        condition_on_dp1=cond_on_dp1,
     ).to(device)
 
     # Optimize the score network AND the encoder (if trainable).
@@ -289,9 +292,14 @@ def train(args, config):
                         bl = bridge.baseline_loss(dp1)
                         sig = bridge.signal_captured(dp1, dp2)
                         recon = bridge.reconstruction_error(dp1, dp2, steps=recon_steps)
+                        # Identity baseline: ||DP2 - DP1||. recon_err at or above
+                        # this means the bridge is not transporting at all (it
+                        # would do no worse than returning the input unchanged).
+                        ident = (dp2 - dp1).norm(dim=-1).mean()
                     print(f"  [diag] baseline {bl.item():.4f}, "
                           f"signal {sig[2]*100:.1f}%, "
-                          f"recon_err {recon.item():.4f}")
+                          f"recon_err {recon.item():.4f} "
+                          f"(identity {ident.item():.4f})")
 
             if global_step % tcfg["eval_every"] == 0:
                 val_loss = None

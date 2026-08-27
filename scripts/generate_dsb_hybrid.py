@@ -97,15 +97,18 @@ def build_hybrid(config, device):
         score_net = EditConditionedScoreNet(
             dim=embedder.dim, num_tags=5, hidden_dim=mcfg["hidden_dim"],
             num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
+            cond_dim=embedder.dim if config["dsb"].get("condition_on_dp1", False) else 0,
         )
     else:
         score_net = MLPScoreNet(dim=embedder.dim, hidden_dim=mcfg["hidden_dim"],
-                                num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"])
+                                num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
+                                cond_dim=embedder.dim if config["dsb"].get("condition_on_dp1", False) else 0)
     bridge = DiffSchrodingerBridge(
         dim=embedder.dim, score_net=score_net,
         beta_schedule=config["dsb"]["beta_schedule"],
         num_steps=config["dsb"]["num_steps"],
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
+        condition_on_dp1=bool(config["dsb"].get("condition_on_dp1", False)),
     ).to(device)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
@@ -119,13 +122,16 @@ def build_hybrid(config, device):
 def build_bridge(config, embedder, device):
     """Build just bridge + score net (for plain-DSB checkpoints)."""
     mcfg = config["model"]
+    cond_on = bool(config["dsb"].get("condition_on_dp1", False))
     score_net = MLPScoreNet(dim=embedder.dim, hidden_dim=mcfg["hidden_dim"],
-                            num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"])
+                            num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
+                            cond_dim=embedder.dim if cond_on else 0)
     bridge = DiffSchrodingerBridge(
         dim=embedder.dim, score_net=score_net,
         beta_schedule=config["dsb"]["beta_schedule"],
         num_steps=config["dsb"]["num_steps"],
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
+        condition_on_dp1=cond_on,
     ).to(device)
     return bridge
 

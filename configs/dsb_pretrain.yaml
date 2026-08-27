@@ -29,6 +29,11 @@ dsb:
   num_steps: 1000
   beta_min: 0.0001
   beta_max: 0.02
+  # Condition the score net on the source endpoint DP1. Without it the drift
+  # target collapses to E[DP2 | x_t] (posterior mean), putting a floor under
+  # reconstruction_error. Old checkpoints trained without this must keep it
+  # false (the score-net input dim changes).
+  condition_on_dp1: true
 
 data:
   # Plain text file, one datapoint (line) per row. No pairing required.

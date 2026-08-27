@@ -91,9 +91,11 @@ class MLPScoreNet(nn.Module):
         hidden_dim: int = 512,
         num_layers: int = 3,
         time_embed_dim: int = 128,
+        cond_dim: int = 0,
     ):
         super().__init__()
         self.dim = dim
+        self.cond_dim = cond_dim
         self.time_embed_dim = time_embed_dim
 
         self.time_mlp = nn.Sequential(
@@ -104,7 +106,7 @@ class MLPScoreNet(nn.Module):
         )
 
         layers = []
-        in_dim = dim + time_embed_dim
+        in_dim = dim + cond_dim + time_embed_dim
         for _ in range(num_layers):
             layers.append(nn.Linear(in_dim, hidden_dim))
             layers.append(nn.SiLU())
@@ -112,14 +114,20 @@ class MLPScoreNet(nn.Module):
         layers.append(nn.Linear(hidden_dim, dim))
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor,
+                cond: Optional[torch.Tensor] = None) -> torch.Tensor:
         # x: (B, S, D) or (B, D); t: (B,) in [0, 1]
+        # cond: optional conditioning with the same shape as x (e.g. DP1).
         t = t.reshape(-1, 1)
         t_emb = self.time_mlp(t)  # (B, time_embed_dim)
         # Broadcast time embedding across sequence dim if present.
         if x.dim() == 3:
             t_emb = t_emb.unsqueeze(1).expand(-1, x.shape[1], -1)
         h = torch.cat([x, t_emb], dim=-1)
+        if self.cond_dim > 0:
+            if cond is None:
+                raise ValueError("score net built with cond_dim > 0 requires cond")
+            h = torch.cat([cond, h], dim=-1)
         return self.net(h)
 
 
@@ -147,10 +155,17 @@ class DiffSchrodingerBridge(nn.Module):
         num_steps: int = 1000,
         beta_min: float = 0.0001,
         beta_max: float = 0.02,
+        condition_on_dp1: bool = False,
     ):
         super().__init__()
         self.dim = dim
         self.num_steps = num_steps
+        # Condition the score net on the source endpoint DP1. Without this, the
+        # best achievable drift target is the posterior mean E[DP2 | x_t], which
+        # at low t collapses to E[DP2 | DP1] and puts a floor under
+        # reconstruction_error. With conditioning, _estimate_target recovers
+        # E[DP2 | x_t, DP1] and the floor drops to the noise realization.
+        self.condition_on_dp1 = condition_on_dp1
 
         if beta_schedule == "linear":
             betas = linear_beta_schedule(num_steps, beta_min, beta_max)
@@ -192,6 +207,13 @@ class DiffSchrodingerBridge(nn.Module):
 
     def _beta_at(self, t: torch.Tensor) -> torch.Tensor:
         return self._interp(self.betas, t)
+
+    def score_predict(self, x: torch.Tensor, t: torch.Tensor,
+                      dp1: Optional[torch.Tensor] = None,
+                      **kwargs) -> torch.Tensor:
+        """Evaluate the score net, optionally conditioning on the source DP1."""
+        cond = dp1 if self.condition_on_dp1 else None
+        return self.score_net(x, t, cond=cond, **kwargs)
 
     # ── Forward diffusion: sample x_t from the bridge ────────────────────────
 
@@ -252,7 +274,7 @@ class DiffSchrodingerBridge(nn.Module):
         if t is None:
             t = torch.rand(B, device=dp1.device)
         x_t, score_target = self.forward_sample(dp1, dp2, t)
-        score_pred = self.score_net(x_t, t)
+        score_pred = self.score_predict(x_t, t, dp1=dp1)
         sigma2_t = self._sigma2_at(t).reshape(-1, 1, 1) if x_t.dim() == 3 else self._sigma2_at(t).reshape(-1, 1)
         loss = F.mse_loss(score_pred, score_target, reduction="none")
         loss = (loss * sigma2_t).mean()
@@ -341,7 +363,7 @@ class DiffSchrodingerBridge(nn.Module):
         """
         alpha_t = self._alpha_at(t).reshape(-1, 1, 1) if x.dim() == 3 else self._alpha_at(t).reshape(-1, 1)
         sigma2_t = self._sigma2_at(t).reshape_as(alpha_t)
-        s = self.score_net(x, t)
+        s = self.score_predict(x, t, dp1=dp1)
         mu = x + sigma2_t * s
         denom = (1 - alpha_t).clamp(min=1e-3)
         return (mu - alpha_t * dp1) / denom
@@ -376,7 +398,7 @@ class DiffSchrodingerBridge(nn.Module):
         traj = [x]
         for i in range(steps):
             t = torch.full((x.shape[0],), 1.0 - (i + 0.5) * dt, device=x.device)
-            s = self.score_net(x, t)
+            s = self.score_predict(x, t, dp1=dp1)
             sigma2_t = self._sigma2_at(t).reshape(-1, 1, 1) if x.dim() == 3 else self._sigma2_at(t).reshape(-1, 1)
             beta_t = self._beta_at(t).reshape_as(sigma2_t)
             # Forward drift toward the score-recovered target.
