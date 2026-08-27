@@ -262,6 +262,21 @@ def train(args, config):
     best_val = float("inf")
     global_step = 0
 
+    # ── Resume support ──────────────────────────────────────────────────
+    # Restore model, optimizer, scheduler, and step state so an interrupted
+    # run (e.g. Kaggle's 12h cap) can continue where it left off.
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location=device)
+        hybrid.load_state_dict(ckpt["hybrid"])
+        embedder.load_state_dict(ckpt["embedder"])
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if "scheduler_state_dict" in ckpt:
+            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        global_step = int(ckpt.get("global_step", 0))
+        best_val = float(ckpt.get("best_val", float("inf")))
+        print(f"Resumed from {args.resume} (step {global_step}, best_val {best_val:.4f})")
+
     while global_step < total:
         for batch in batch_stream(config["data"]["train_path"], batch_size,
                                   buffer_size=config["data"].get("shuffle_buffer", 100000)):
@@ -325,6 +340,20 @@ def train(args, config):
                     }, os.path.join(args.save_dir, "best.pt"))
                     print(f"  [eval] saved best (total {val_loss:.4f})")
 
+                # Overwriteable resume checkpoint (for session-limited runs
+                # like Kaggle's 12h cap): enables --resume continuation.
+                torch.save({
+                    "hybrid": hybrid.state_dict(),
+                    "embedder": embedder.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "global_step": global_step,
+                    "best_val": best_val,
+                    "config": config,
+                    "dim": dim,
+                    "embedder_name": mcfg["embedder"],
+                }, os.path.join(args.save_dir, "resume.pt"))
+
     torch.save({
         "hybrid": hybrid.state_dict(),
         "embedder": embedder.state_dict(),
@@ -341,6 +370,8 @@ def parse_args():
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--save_dir", default="./checkpoints_dsb_hybrid")
+    parser.add_argument("--resume", default=None,
+                        help="Path to a resume.pt checkpoint to continue from")
     return parser.parse_args()
 
 
