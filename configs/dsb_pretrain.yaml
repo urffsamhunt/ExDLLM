@@ -34,6 +34,9 @@ dsb:
   # reconstruction_error. Old checkpoints trained without this must keep it
   # false (the score-net input dim changes).
   condition_on_dp1: true
+  # "bridge" = variance vanishes at BOTH endpoints (see dsb_hybrid_pretrain.yaml).
+  sigma2_schedule: "bridge"
+  condition_on_dp1: true
 
 data:
   # Plain text file, one datapoint (line) per row. No pairing required.

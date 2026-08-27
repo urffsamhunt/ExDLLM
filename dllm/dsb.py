@@ -156,6 +156,7 @@ class DiffSchrodingerBridge(nn.Module):
         beta_min: float = 0.0001,
         beta_max: float = 0.02,
         condition_on_dp1: bool = False,
+        sigma2_schedule: str = "ou",
     ):
         super().__init__()
         self.dim = dim
@@ -177,9 +178,22 @@ class DiffSchrodingerBridge(nn.Module):
 
         # B_t = int_0^t beta_s ds (Euler discretization: cumulative sum)
         self.register_buffer("B", torch.cumsum(betas, dim=0))
-        # alpha_t = exp(-B_t), sigma_t^2 = (1 - exp(-2 B_t)) / 2
+        # alpha_t = exp(-B_t)
         self.register_buffer("alpha", torch.exp(-self.B))
-        self.register_buffer("sigma2", (1.0 - torch.exp(-2.0 * self.B)) / 2.0)
+        if sigma2_schedule not in ("ou", "bridge"):
+            raise ValueError(f"Unknown sigma2_schedule: {sigma2_schedule}")
+        self.sigma2_schedule = sigma2_schedule
+        if sigma2_schedule == "bridge":
+            # True two-ended bridge: variance vanishes at BOTH endpoints
+            # (alpha=1 at t=0 pins DP1, alpha=0 at t=1 pins DP2), peak 0.5 at
+            # alpha=0.5. The OU schedule instead saturates at sigma2(1)=0.5,
+            # leaving ~sqrt(0.5*D) L2 of terminal noise that the score net
+            # must cancel through dp2_est — the main cause of recon_err
+            # plateauing above the identity baseline.
+            sigma2 = 2.0 * self.alpha * (1.0 - self.alpha)
+        else:
+            sigma2 = (1.0 - torch.exp(-2.0 * self.B)) / 2.0
+        self.register_buffer("sigma2", sigma2)
 
         self.score_net = score_net or MLPScoreNet(dim=dim)
 
@@ -409,8 +423,18 @@ class DiffSchrodingerBridge(nn.Module):
             # Forward drift toward the score-recovered target.
             dp2_est = self._estimate_target(x, t, dp1)
             drift = beta_t * (dp2_est - x)
+            # Noise coefficient g^2 from the Fokker-Planck consistency condition
+            # d(sigma2)/dt = -2*beta*sigma2 + g^2, so the sampled marginals match
+            # the schedule the score net was trained on. For the OU schedule this
+            # gives g^2 = beta; for the bridge schedule g^2 = 2*beta*alpha, which
+            # vanishes at both endpoints (pinned DP1/DP2).
+            alpha_t = self._alpha_at(t).reshape_as(sigma2_t)
+            if self.sigma2_schedule == "bridge":
+                g2 = 2.0 * beta_t * alpha_t
+            else:
+                g2 = beta_t
             noise = torch.randn_like(x)
-            x = x + drift * dt + torch.sqrt(beta_t * dt + 1e-8) * noise
+            x = x + drift * dt + torch.sqrt(g2 * dt + 1e-8) * noise
             if return_trajectory:
                 traj.append(x.clone())
         if return_trajectory:

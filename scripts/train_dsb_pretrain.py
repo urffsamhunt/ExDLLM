@@ -190,6 +190,7 @@ def train(args, config):
         beta_min=config["dsb"]["beta_min"],
         beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=cond_on_dp1,
+        sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
     ).to(device)
 
     # Optimize the score network AND the encoder (if trainable).

@@ -37,6 +37,11 @@ dsb:
   beta_max: 0.02
   # Condition the score net on the source endpoint DP1 (see dsb_pretrain.yaml).
   condition_on_dp1: true
+  # "bridge" = variance vanishes at BOTH endpoints (true two-ended bridge;
+  # terminal state pinned to DP2, no noise for the score net to cancel).
+  # "ou" = legacy schedule (sigma2 saturates at 0.5). Checkpoints record this,
+  # so generation rebuilds the matching schedule.
+  sigma2_schedule: "bridge"
 
 data:
   train_path: "./data/pretrain_en.txt"

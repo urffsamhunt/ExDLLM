@@ -222,6 +222,7 @@ def train(args, config):
         num_steps=config["dsb"]["num_steps"],
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=cond_on_dp1,
+        sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
     ).to(device)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
