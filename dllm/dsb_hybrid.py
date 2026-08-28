@@ -164,37 +164,81 @@ def corrupt_fixed(
 # ── Discrete heads (operate per-position on the SDE embedding x_t) ───────────
 
 class TaggerHead(nn.Module):
-    """Predict the edit op (NUM_TAGS classes) at every position."""
+    """
+    Predict the edit op (NUM_TAGS classes) at every position.
 
-    def __init__(self, dim: int):
+    Conditions on the noise level t and the source embedding DP1: without t
+    the head cannot distinguish "x looks clean because t~0" from "this
+    position was never corrupted", so its Bayes-optimal prediction collapses
+    to the class prior (observed: tag loss stuck at ~0.4 for an entire run).
+    With DP1 it can compare the current state against the source — which is
+    also what makes the head usable at generation time (t=1, cond=DP1).
+    """
+
+    def __init__(self, dim: int, time_embed_dim: int = 128, cond_dim: int = 0):
         super().__init__()
+        self.cond_dim = cond_dim
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, time_embed_dim),
+            nn.SiLU(),
+            nn.Linear(time_embed_dim, time_embed_dim),
+            nn.SiLU(),
+        )
         self.net = nn.Sequential(
-            nn.Linear(dim, dim),
+            nn.Linear(dim + cond_dim + time_embed_dim, dim),
             nn.GELU(),
             nn.LayerNorm(dim),
             nn.Linear(dim, NUM_TAGS),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, S, D) -> (B, S, NUM_TAGS)
-        return self.net(x)
+    def forward(self, x: torch.Tensor, t: torch.Tensor,
+                cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # x: (B, S, D); t: (B,); cond: (B, S, D) e.g. DP1
+        h = x
+        if self.cond_dim > 0:
+            if cond is None:
+                raise ValueError("head built with cond_dim > 0 requires cond")
+            h = torch.cat([cond, h], dim=-1)
+        t_emb = self.time_mlp(t.reshape(-1, 1))          # (B, T)
+        t_emb = t_emb.unsqueeze(1).expand(-1, h.shape[1], -1)
+        h = torch.cat([h, t_emb], dim=-1)
+        return self.net(h)
 
 
 class GenHead(nn.Module):
-    """Predict the clean token at REPLACE positions (sparse projection)."""
+    """Predict the clean token at REPLACE positions (sparse projection).
 
-    def __init__(self, dim: int, vocab_size: int):
+    Same t + DP1 conditioning rationale as ``TaggerHead``.
+    """
+
+    def __init__(self, dim: int, vocab_size: int,
+                 time_embed_dim: int = 128, cond_dim: int = 0):
         super().__init__()
+        self.cond_dim = cond_dim
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, time_embed_dim),
+            nn.SiLU(),
+            nn.Linear(time_embed_dim, time_embed_dim),
+            nn.SiLU(),
+        )
         self.net = nn.Sequential(
-            nn.Linear(dim, dim),
+            nn.Linear(dim + cond_dim + time_embed_dim, dim),
             nn.GELU(),
             nn.LayerNorm(dim),
             nn.Linear(dim, vocab_size),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (..., D) -> (..., V)
-        return self.net(x)
+    def forward(self, x: torch.Tensor, t: torch.Tensor,
+                cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # x: (N, D) selected positions; t: (N,); cond: (N, D)
+        h = x
+        if self.cond_dim > 0:
+            if cond is None:
+                raise ValueError("head built with cond_dim > 0 requires cond")
+            h = torch.cat([cond, h], dim=-1)
+        t_emb = self.time_mlp(t.reshape(-1, 1))          # (N, T)
+        h = torch.cat([h, t_emb], dim=-1)
+        return self.net(h)
 
 
 # ── The hybrid model ─────────────────────────────────────────────────────────
@@ -214,12 +258,18 @@ class DSBHybrid(nn.Module):
         lambda_gen: float = 1.0,
         tag_weights: Optional[Tuple[float, ...]] = None,
         gen_ignore_index: int = -100,
+        condition_heads: bool = False,
+        time_embed_dim: int = 128,
     ):
         super().__init__()
         self.bridge: DiffSchrodingerBridge = bridge
         dim = bridge.dim
-        self.tagger = TaggerHead(dim)
-        self.generator = GenHead(dim, vocab_size)
+        self.condition_heads = condition_heads
+        head_cond_dim = dim if condition_heads else 0
+        self.tagger = TaggerHead(dim, time_embed_dim=time_embed_dim,
+                                 cond_dim=head_cond_dim)
+        self.generator = GenHead(dim, vocab_size, time_embed_dim=time_embed_dim,
+                                 cond_dim=head_cond_dim)
         self.lambda_tag = lambda_tag
         self.lambda_gen = lambda_gen
         self.gen_ignore_index = gen_ignore_index
@@ -296,8 +346,9 @@ class DSBHybrid(nn.Module):
                 "note": "pooled embeddings: discrete heads skipped",
             }
 
-        # 3) Tagger head on the SDE intermediate embedding x_t.
-        tag_logits = self.tagger(x_t)              # (B, S, NUM_TAGS)
+        # 3) Tagger head on the SDE intermediate embedding x_t (t + DP1
+        #    conditioned so corruption stays identifiable at low t).
+        tag_logits = self.tagger(x_t, t, cond=dp1)     # (B, S, NUM_TAGS)
         if self._tag_weights is not None:
             w = self._tag_weights.to(tag_logits.device)
         else:
@@ -311,7 +362,9 @@ class DSBHybrid(nn.Module):
         if select.any():
             xp = x_t.reshape(-1, x_t.shape[-1])[select]
             lb = gen_labels.reshape(-1)[select]
-            gl = self.generator(xp)                # (n, V)
+            t_sel = t.repeat_interleave(x_t.shape[1], dim=0)[select]
+            c_sel = dp1.reshape(-1, x_t.shape[-1])[select]
+            gl = self.generator(xp, t_sel, cond=c_sel)         # (n, V)
             loss_gen = F.cross_entropy(gl, lb)
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
@@ -337,7 +390,8 @@ class DSBHybrid(nn.Module):
         Returns (final_embedding, tag_probs).
         """
         x = self.bridge.sample(dp1, steps=steps)
-        tag_logits = self.tagger(x)                # (B, S, NUM_TAGS)
+        t_full = torch.ones(x.shape[0], device=x.device)
+        tag_logits = self.tagger(x, t_full, cond=dp1)   # (B, S, NUM_TAGS)
         return x, tag_logits.softmax(-1)
 
     # ── Phase 2: full edit-aware joint loss & two-phase sampling ──────────────
@@ -347,9 +401,11 @@ class DSBHybrid(nn.Module):
         x_t: torch.Tensor,          # (B, S, D) SDE intermediate embedding
         tag_labels: torch.Tensor,   # (B, S) int64 in 0..4, -100 = ignore
         gen_labels: torch.Tensor,   # (B, S) int64, -100 = ignore
+        t: Optional[torch.Tensor] = None,   # (B,) noise levels
+        dp1: Optional[torch.Tensor] = None,  # (B, S, D) source embedding
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Tagger + generator cross-entropy on the SDE embedding x_t."""
-        tag_logits = self.tagger(x_t)                      # (B, S, NUM_TAGS)
+        tag_logits = self.tagger(x_t, t, cond=dp1)         # (B, S, NUM_TAGS)
         w = self._tag_weights.to(tag_logits.device) if self._tag_weights is not None else None
         loss_tag = F.cross_entropy(tag_logits.permute(0, 2, 1), tag_labels,
                                    weight=w, ignore_index=-100)
@@ -357,7 +413,9 @@ class DSBHybrid(nn.Module):
         if select.any():
             xp = x_t.reshape(-1, x_t.shape[-1])[select]
             lb = gen_labels.reshape(-1)[select]
-            loss_gen = F.cross_entropy(self.generator(xp), lb)
+            t_sel = t.repeat_interleave(x_t.shape[1], dim=0)[select]
+            c_sel = dp1.reshape(-1, x_t.shape[-1])[select]
+            loss_gen = F.cross_entropy(self.generator(xp, t_sel, cond=c_sel), lb)
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
         return loss_tag, loss_gen
@@ -388,7 +446,8 @@ class DSBHybrid(nn.Module):
             u_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
         loss_sm = F.mse_loss(u_pred, u_target)
 
-        loss_tag, loss_gen = self.build_edit_loss(x_t, tag_labels, gen_labels)
+        loss_tag, loss_gen = self.build_edit_loss(x_t, tag_labels, gen_labels,
+                                                  t=t, dp1=dp1)
         total = loss_sm + self.lambda_tag * loss_tag + self.lambda_gen * loss_gen
         return total, {
             "total": total.item(),
@@ -416,9 +475,11 @@ class DSBHybrid(nn.Module):
         """
         x = self.bridge.sample(dp1, steps=sde_steps)
         # Guard refine_iters==0 so tag_logits is always bound.
-        tag_logits = self.tagger(x)
+        B = x.shape[0]
+        t_full = torch.ones(B, device=x.device)
+        tag_logits = self.tagger(x, t_full, cond=dp1)
         for _ in range(max(1, refine_iters)):
-            tag_logits = self.tagger(x)                 # (B, S, NUM_TAGS)
+            tag_logits = self.tagger(x, t_full, cond=dp1)   # (B, S, NUM_TAGS)
         return x, tag_logits.argmax(-1)                 # (B, S)
 
     @torch.no_grad()
@@ -431,6 +492,7 @@ class DSBHybrid(nn.Module):
         temperature: float = 1.0,
         top_k: int = 50,
         top_p: float = 0.9,
+        dp1: Optional[torch.Tensor] = None,  # (B, S, D) source embedding (head cond)
     ) -> List[str]:
         """
         Turn the SDE output embedding into literal text by porting the DLLM
@@ -457,9 +519,14 @@ class DSBHybrid(nn.Module):
         results = []
 
         for b in range(B):
-            # Phase A: discrete edit tags + generator logits on the SDE embedding.
-            tag_logits = self.tagger(x[b])                  # (S, NUM_TAGS)
-            gen_logits = self.generator(x[b])               # (S, V)
+            # Phase A: discrete edit tags + generator logits on the SDE embedding
+            # (evaluated at t=1 against the source DP1, matching training-time
+            # conditioning).
+            t_row = torch.ones(1, device=x.device)
+            tag_logits = self.tagger(x[b].unsqueeze(0), t_row,
+                                     cond=dp1[b:b+1])[0]            # (S, NUM_TAGS)
+            gen_logits = self.generator(x[b], t_row.expand(S),
+                                        cond=dp1[b])[0]             # (S, V)
             tags = tag_logits.argmax(-1).tolist()
             gen_toks = self._sample_topk(gen_logits, temperature, top_k, top_p)
 
@@ -533,6 +600,7 @@ class DSBHybrid(nn.Module):
         top_p: float = 0.9,
         max_iterations: int = 8,
         max_len: Optional[int] = None,
+        dp1: Optional[torch.Tensor] = None,  # (B, S, D) source embedding (head cond)
     ) -> List[str]:
         """
         True variable-length iterative refinement decode (DLLM-style, ported).
@@ -564,6 +632,8 @@ class DSBHybrid(nn.Module):
         S = x.shape[1]
         device = x.device
         max_len = max_len if max_len is not None else S
+        if self.tagger.cond_dim > 0 and dp1 is None:
+            raise ValueError("conditioned heads require dp1 (the source embedding)")
 
         # Per-row variable-length canvases: start all-mask at the seed width.
         canvases: List[List[int]] = [[M] * S for _ in range(B)]
@@ -576,8 +646,24 @@ class DSBHybrid(nn.Module):
 
             for b in range(B):
                 emb = cur[b].unsqueeze(0)                 # (1, L, D)
-                tag_logits = self.tagger(emb)[0]          # (L, T)
-                gen_logits = self.generator(emb)[0]       # (L, V)
+                L = emb.shape[1]
+                # Heads are evaluated at t=1 (the SDE output state) against the
+                # source DP1, so "REPLACE" means "this position still differs
+                # from the source". DP1 is aligned to the current canvas length
+                # (INSERT/DELETE change L across refinement rounds).
+                t_row = torch.ones(1, device=emb.device)
+                c_row = None
+                if dp1 is not None:
+                    c = dp1[b:b+1]
+                    if c.shape[1] >= L:
+                        c_row = c[:, :L]
+                    else:
+                        pad = torch.zeros(1, L - c.shape[1], c.shape[2],
+                                          device=c.device, dtype=c.dtype)
+                        c_row = torch.cat([c, pad], dim=1)
+                tag_logits = self.tagger(emb, t_row, cond=c_row)[0]     # (L, T)
+                gen_logits = self.generator(cur[b], t_row.expand(L),
+                                            cond=(c_row[0] if c_row is not None else None))[0]  # (L, V)
                 tags = tag_logits.argmax(-1).tolist()
                 gen_toks = self._sample_topk(gen_logits, temperature, top_k, top_p)
 

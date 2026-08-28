@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import torch.nn as nn
 
-from dllm.dsb import DiffSchrodingerBridge, MLPScoreNet
+from dllm.dsb import DiffSchrodingerBridge, MLPScoreNet, TransformerScoreNet
 from dllm.dsb_hybrid import (
     DSBHybrid,
     EditConditionedScoreNet,
@@ -205,17 +205,24 @@ def train(args, config):
                                    tokenizer.vocab_size)))
 
     cond_on_dp1 = bool(config["dsb"].get("condition_on_dp1", False))
-    # Score net: MLP by default, edit-conditioned if config asks.
-    if mcfg.get("edit_conditioned_score", False):
+    cond_dim = dim if cond_on_dp1 else 0
+    score_type = mcfg.get("score_net", "mlp")
+    if score_type == "transformer":
+        score_net = TransformerScoreNet(
+            dim=dim, hidden_dim=mcfg["hidden_dim"], num_layers=mcfg["num_layers"],
+            time_embed_dim=mcfg["time_embed_dim"], cond_dim=cond_dim,
+            num_heads=mcfg.get("num_heads", 8),
+        )
+    elif mcfg.get("edit_conditioned_score", False):
         score_net = EditConditionedScoreNet(
             dim=dim, num_tags=5, hidden_dim=mcfg["hidden_dim"],
             num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
-            cond_dim=dim if cond_on_dp1 else 0,
+            cond_dim=cond_dim,
         )
     else:
         score_net = MLPScoreNet(dim=dim, hidden_dim=mcfg["hidden_dim"],
                                 num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
-                                cond_dim=dim if cond_on_dp1 else 0)
+                                cond_dim=cond_dim)
     bridge = DiffSchrodingerBridge(
         dim=dim, score_net=score_net,
         beta_schedule=config["dsb"]["beta_schedule"],
@@ -226,9 +233,11 @@ def train(args, config):
     ).to(device)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
-        lambda_tag=config["training"].get("lambda_tag", 1.0),
-        lambda_gen=config["training"].get("lambda_gen", 1.0),
-        tag_weights=config["model"].get("tag_weights"),
+        lambda_tag=tcfg.get("lambda_tag", 1.0),
+        lambda_gen=tcfg.get("lambda_gen", 1.0),
+        tag_weights=mcfg.get("tag_weights"),
+        condition_heads=mcfg.get("condition_heads", False),
+        time_embed_dim=mcfg.get("time_embed_dim", 128),
     ).to(device)
 
     params = []

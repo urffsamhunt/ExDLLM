@@ -23,6 +23,16 @@ model:
   # Edit-conditioned score network (phase 2): conditions the drift on prior
   # edit tags. Set true when using corruption_scheme "full".
   edit_conditioned_score: false
+  # Score network: "mlp" (per-position) or "transformer" (self-attention over
+  # positions — denoising can use other positions' SDE states, attacking the
+  # per-position MLP's ~65% signal ceiling).
+  score_net: "transformer"
+  num_heads: 8
+  # Condition tagger/generator heads on t + DP1. Without t the tagger cannot
+  # distinguish "clean because t~0" from "never corrupted" and collapses to the
+  # class prior; with DP1 it compares current state vs source, which is also
+  # what makes the heads usable at generation time (t=1, cond=DP1).
+  condition_heads: true
   # Score network (MLP) hyperparameters.
   hidden_dim: 512
   num_layers: 3

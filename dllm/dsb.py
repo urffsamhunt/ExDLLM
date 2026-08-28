@@ -72,7 +72,7 @@ def cosine_beta_schedule(num_steps: int, s: float = 0.008) -> torch.Tensor:
     return torch.clamp(betas, 0.0001, 0.9999)
 
 
-# ── Score network ─────────────────────────────────────────────────────────────
+# ── Score network ─────────────────────────────────────────────────────────
 
 class MLPScoreNet(nn.Module):
     """
@@ -129,6 +129,72 @@ class MLPScoreNet(nn.Module):
                 raise ValueError("score net built with cond_dim > 0 requires cond")
             h = torch.cat([cond, h], dim=-1)
         return self.net(h)
+
+
+class TransformerScoreNet(nn.Module):
+    """
+    A small transformer score network: self-attention across positions.
+
+    Unlike ``MLPScoreNet`` (a per-position MLP), positions exchange information
+    at intermediate SDE states, so denoising decisions can use the current
+    state of OTHER positions and not just the context frozen into the encoder
+    embeddings. This attacks the signal ceiling of the per-position MLP
+    (~65% observed vs ~90% achievable). A (B, D) input is treated as a
+    length-1 sequence, so pooled (plain-DSB) inputs also work.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int = 512,
+        num_layers: int = 3,
+        time_embed_dim: int = 128,
+        cond_dim: int = 0,
+        num_heads: int = 8,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.cond_dim = cond_dim
+        self.time_embed_dim = time_embed_dim
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, time_embed_dim),
+            nn.SiLU(),
+            nn.Linear(time_embed_dim, time_embed_dim),
+            nn.SiLU(),
+        )
+        self.in_proj = nn.Linear(dim + cond_dim + time_embed_dim, hidden_dim)
+        layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=2 * hidden_dim,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+        self.out_proj = nn.Linear(hidden_dim, dim)
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor,
+                cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # x: (B, S, D) or (B, D); t: (B,); cond: same shape as x (e.g. DP1)
+        squeeze = x.dim() == 2
+        if squeeze:
+            x = x.unsqueeze(1)                           # (B, 1, D)
+            if cond is not None:
+                cond = cond.unsqueeze(1)
+        h_in = x
+        if self.cond_dim > 0:
+            if cond is None:
+                raise ValueError("score net built with cond_dim > 0 requires cond")
+            h_in = torch.cat([cond, h_in], dim=-1)
+        t_emb = self.time_mlp(t.reshape(-1, 1))          # (B, T)
+        t_emb = t_emb.unsqueeze(1).expand(-1, h_in.shape[1], -1)
+        h = self.in_proj(torch.cat([h_in, t_emb], dim=-1))
+        h = self.encoder(h)
+        out = self.out_proj(h)
+        return out.squeeze(1) if squeeze else out
 
 
 # ── The SDE / DSB bridge ──────────────────────────────────────────────────────
@@ -319,6 +385,7 @@ class DiffSchrodingerBridge(nn.Module):
         dp2: torch.Tensor,
         t: Optional[torch.Tensor] = None,
         num_eval: int = 16,
+        num_t: int = 17,
     ) -> Tuple[float, float, float]:
         """
         Compare the actual score-matching loss against the zero-score baseline.
@@ -328,11 +395,25 @@ class DiffSchrodingerBridge(nn.Module):
         is the fraction of the score signal the network has captured. signal ~ 0
         means it predicts nothing; signal -> 1 means it matches the true score.
 
-        ``num_eval`` uses a subset of the batch to keep this cheap; pass
-        ``t`` to evaluate at specific noise levels.
+        By default the loss is AVERAGED over a fixed grid of ``num_t`` noise
+        levels in [0.03, 0.97] (each on ``num_eval`` batch samples). A single
+        random t draw makes this metric swing wildly — with the bridge schedule
+        the difficulty is concentrated at mid-t, so endpoint draws give
+        near-zero loss and mid draws give large loss, producing ±40-point
+        swings (and negative values on small samples) between diagnostics.
+        Pass ``t`` explicitly to evaluate at specific noise levels.
         """
-        loss = self.score_matching_loss(dp1[:num_eval], dp2[:num_eval], t=t)
-        baseline = self.baseline_loss(dp1[:num_eval])
+        if t is None:
+            grid = torch.linspace(0.03, 0.97, num_t, device=dp1.device)
+            t = grid.repeat(num_eval)
+            dp1_e = dp1[:num_eval].repeat_interleave(num_t, dim=0)
+            dp2_e = dp2[:num_eval].repeat_interleave(num_t, dim=0)
+        else:
+            dp1_e = dp1[:num_eval]
+            dp2_e = dp2[:num_eval]
+        loss = self.score_matching_loss(dp1_e, dp2_e, t=t)
+        # Zero-predictor baseline over the SAME t set: E[||u*||^2/D] = E_t[sigma2_t].
+        baseline = self._sigma2_at(t).mean()
         signal = (baseline - loss) / baseline.clamp(min=1e-6)
         return loss.item(), baseline.item(), signal.item()
 
