@@ -233,8 +233,8 @@ def train(args, config):
     ).to(device)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
-        lambda_tag=tcfg.get("lambda_tag", 1.0),
-        lambda_gen=tcfg.get("lambda_gen", 1.0),
+        lambda_tag=config["training"].get("lambda_tag", 1.0),
+        lambda_gen=config["training"].get("lambda_gen", 1.0),
         tag_weights=mcfg.get("tag_weights"),
         condition_heads=mcfg.get("condition_heads", False),
         time_embed_dim=mcfg.get("time_embed_dim", 128),

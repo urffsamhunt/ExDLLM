@@ -526,7 +526,7 @@ class DSBHybrid(nn.Module):
             tag_logits = self.tagger(x[b].unsqueeze(0), t_row,
                                      cond=dp1[b:b+1])[0]            # (S, NUM_TAGS)
             gen_logits = self.generator(x[b], t_row.expand(S),
-                                        cond=dp1[b])[0]             # (S, V)
+                                        cond=dp1[b])                # (S, V)
             tags = tag_logits.argmax(-1).tolist()
             gen_toks = self._sample_topk(gen_logits, temperature, top_k, top_p)
 
@@ -601,6 +601,7 @@ class DSBHybrid(nn.Module):
         max_iterations: int = 8,
         max_len: Optional[int] = None,
         dp1: Optional[torch.Tensor] = None,  # (B, S, D) source embedding (head cond)
+        seed_ids: Optional[List[List[int]]] = None,  # per-row starting canvas token ids
     ) -> List[str]:
         """
         True variable-length iterative refinement decode (DLLM-style, ported).
@@ -635,8 +636,13 @@ class DSBHybrid(nn.Module):
         if self.tagger.cond_dim > 0 and dp1 is None:
             raise ValueError("conditioned heads require dp1 (the source embedding)")
 
-        # Per-row variable-length canvases: start all-mask at the seed width.
-        canvases: List[List[int]] = [[M] * S for _ in range(B)]
+        # Per-row variable-length canvases: start from seed ids if given (e.g.
+        # the prompt/corrupted tokens — KEEP then preserves REAL tokens, matching
+        # training where uncorrupted positions hold real tokens), else all-mask.
+        if seed_ids is not None:
+            canvases: List[List[int]] = [list(row) for row in seed_ids]
+        else:
+            canvases = [[M] * S for _ in range(B)]
         cur: List[torch.Tensor] = [x[b] for b in range(B)]  # (S, D) per row
 
         for _ in range(max_iterations):
@@ -662,8 +668,9 @@ class DSBHybrid(nn.Module):
                                           device=c.device, dtype=c.dtype)
                         c_row = torch.cat([c, pad], dim=1)
                 tag_logits = self.tagger(emb, t_row, cond=c_row)[0]     # (L, T)
+                # cur[b] is already (L, D) -> generator returns (L, V) directly.
                 gen_logits = self.generator(cur[b], t_row.expand(L),
-                                            cond=(c_row[0] if c_row is not None else None))[0]  # (L, V)
+                                            cond=(c_row[0] if c_row is not None else None))  # (L, V)
                 tags = tag_logits.argmax(-1).tolist()
                 gen_toks = self._sample_topk(gen_logits, temperature, top_k, top_p)
 

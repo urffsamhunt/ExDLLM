@@ -183,6 +183,8 @@ def main():
     parser.add_argument("--top_k", type=int, default=50)
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--corpus", default=None, help="corpus file for nearest-neighbor decode (plain DSB)")
+    parser.add_argument("--corrupt", action="store_true",
+                        help="hybrid only: corrupt the prompt first (the model is a denoiser)")
     parser.add_argument("--k", type=int, default=5, help="nearest neighbors to show (plain DSB)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
@@ -233,13 +235,41 @@ def main():
             embedder2.load_state_dict(embedder_sd)
         hybrid.load_state_dict(ckpt["hybrid"])
         hybrid.eval()
+
+        # The hybrid is a DENOISER (trained corrupted -> clean on the same
+        # sentence), so the meaningful run corrupts the prompt first; from a
+        # clean prompt it will (correctly) reconstruct the prompt itself.
+        canvas_ids = ids[0].tolist()
+        if args.corrupt:
+            from dllm.dsb_hybrid import corrupt_fixed
+            ccfg = config["data"]["corruption"]
+            noise_pool = list(range(4, min(ccfg.get("noise_vocab_size", 100) + 4,
+                                           tokenizer.vocab_size)))
+            corr, _, _ = corrupt_fixed(
+                canvas_ids,
+                mask_prob=ccfg.get("mask_prob", 0.15),
+                mask_ratio=ccfg.get("mask_ratio", 0.8),
+                noise_pool=noise_pool,
+                mask_id=tokenizer.mask_token_id,
+            )
+            canvas_ids = corr
+            corr_ids = torch.tensor([corr], device=device)
+            with torch.no_grad():
+                out_c = embedder.encoder(input_ids=corr_ids,
+                                         attention_mask=torch.ones_like(corr_ids))
+            dp1 = out_c.last_hidden_state
+            specials = {tokenizer.bos_token_id, tokenizer.eos_token_id,
+                        tokenizer.pad_token_id, tokenizer.mask_token_id}
+            shown = tokenizer.decode([t for t in corr if t not in specials]).strip()
+            print(f"Corrupted canvas: {shown!r}")
+
         x = hybrid.bridge.sample(dp1, steps=args.sde_steps)
         with torch.no_grad():
             texts = hybrid.generate_text(
                 x, tokenizer, embedder2,
                 temperature=args.temperature, top_k=args.top_k, top_p=args.top_p,
                 max_iterations=args.max_iterations, max_len=args.max_len,
-                dp1=dp1,
+                dp1=dp1, seed_ids=[canvas_ids],
             )
         print("Generated Text:")
         for t in texts:

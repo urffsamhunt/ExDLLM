@@ -404,10 +404,14 @@ class DiffSchrodingerBridge(nn.Module):
         Pass ``t`` explicitly to evaluate at specific noise levels.
         """
         if t is None:
+            # Derive the sample count from the ACTUAL batch size — batches can
+            # be smaller than num_eval (e.g. batch_size 8 < 16), and a silent
+            # short slice mismatches the repeated t grid.
+            n = min(num_eval, dp1.shape[0])
             grid = torch.linspace(0.03, 0.97, num_t, device=dp1.device)
-            t = grid.repeat(num_eval)
-            dp1_e = dp1[:num_eval].repeat_interleave(num_t, dim=0)
-            dp2_e = dp2[:num_eval].repeat_interleave(num_t, dim=0)
+            t = grid.repeat(n)
+            dp1_e = dp1[:n].repeat_interleave(num_t, dim=0)
+            dp2_e = dp2[:n].repeat_interleave(num_t, dim=0)
         else:
             dp1_e = dp1[:num_eval]
             dp2_e = dp2[:num_eval]
