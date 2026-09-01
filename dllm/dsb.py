@@ -462,8 +462,13 @@ class DiffSchrodingerBridge(nn.Module):
         alpha_t = self._alpha_at(t).reshape(-1, 1, 1) if x.dim() == 3 else self._alpha_at(t).reshape(-1, 1)
         u = self.score_predict(x, t, dp1=dp1)
         mu = x + u
-        denom = (1 - alpha_t).clamp(min=1e-3)
-        return (mu - alpha_t * dp1) / denom
+        denom = (1 - alpha_t).clamp(min=0.05)
+        est = (mu - alpha_t * dp1) / denom
+        # Damping: when t is close to 0 (alpha_t ~ 1), the target estimate is
+        # ill-conditioned (division by small 1-alpha_t). Blend with dp1 at low t
+        # to prevent runaway Euler divergence on untrained/early checkpoints.
+        blend = (1.0 - alpha_t).clamp(0.0, 1.0)
+        return blend * est + (1.0 - blend) * dp1
 
     @torch.no_grad()
     def sample(
@@ -481,20 +486,6 @@ class DiffSchrodingerBridge(nn.Module):
         estimate at each step, and returns the final target estimate (not the
         noisy terminal state x, whose marginal variance sigma^2(1)~0.5 is
         large).
-
-        (The previous version evaluated coefficients at t going 1 -> 0 while
-        integrating the state forward, which started the trajectory at an
-        off-distribution point — DP1 is not a sample of N(DP2, 0.5 I) — and
-        made reconstruction_error worse than the identity baseline.)
-
-        Args:
-            dp1: (B, D) or (B, S, D) input.
-            steps: number of integration steps (defaults to num_steps).
-            return_trajectory: if True, return all intermediate states.
-
-        Returns:
-            (B, D) or (B, S, D) estimated DP2, or (steps+1, B, ...) if
-            return_trajectory.
         """
         steps = steps or self.num_steps
         dt = 1.0 / steps
@@ -507,7 +498,7 @@ class DiffSchrodingerBridge(nn.Module):
             beta_t = self._beta_at(t).reshape_as(sigma2_t)
             # Forward drift toward the score-recovered target.
             dp2_est = self._estimate_target(x, t, dp1)
-            drift = beta_t * (dp2_est - x)
+            drift = (beta_t * (dp2_est - x)).clamp(-50.0, 50.0)
             # Noise coefficient g^2 from the Fokker-Planck consistency condition
             # d(sigma2)/dt = -2*beta*sigma2 + g^2, so the sampled marginals match
             # the schedule the score net was trained on. For the OU schedule this

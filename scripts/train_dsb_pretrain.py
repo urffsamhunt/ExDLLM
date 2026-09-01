@@ -208,11 +208,9 @@ def train(args, config):
     recon_steps = int(config["training"].get("recon_steps", 0)) or None  # 0 -> bridge default
     amp_dtype = None
     if use_amp:
-        if torch.cuda.is_available() or device.type == "cuda":
-            amp_dtype = torch.float16
-        elif device.type == "xpu":
-            amp_dtype = torch.bfloat16
-        elif device.type == "cpu":
+        if device.type == "cuda":
+            amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        elif device.type in ("xpu", "cpu"):
             amp_dtype = torch.bfloat16
     optimizer = torch.optim.AdamW(params, lr=tcfg["learning_rate"],
                                   weight_decay=tcfg["weight_decay"])

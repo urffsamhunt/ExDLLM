@@ -201,7 +201,7 @@ def train(args, config):
     batch_size = config["training"]["batch_size"]
     mask_prob = mcf.get("mask_prob", 0.15)
     mask_ratio = mcf.get("mask_ratio", 0.8)
-    noise_pool = list(range(4, min(mcf.get("noise_vocab_size", 100) + 4,
+    noise_pool = list(range(100, min(mcf.get("noise_vocab_size", 30000) + 100,
                                    tokenizer.vocab_size)))
 
     cond_on_dp1 = bool(config["dsb"].get("condition_on_dp1", False))
@@ -261,8 +261,8 @@ def train(args, config):
     recon_steps = int(tcfg.get("recon_steps", 0)) or None  # 0 -> bridge default
     amp_dtype = None
     if tcfg.get("mixed_precision", True):
-        if torch.cuda.is_available() or device.type == "cuda":
-            amp_dtype = torch.float16
+        if device.type == "cuda":
+            amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         elif device.type in ("xpu", "cpu"):
             amp_dtype = torch.bfloat16
     total = tcfg["max_steps"]
@@ -307,6 +307,8 @@ def train(args, config):
                 clean_ids, attn, corruptor, scheme, mask_prob, mask_ratio,
                 noise_pool, mask_id, pad_id, S, device,
             )
+
+            optimizer.zero_grad()
 
             # Embed the noisy (DP1) and clean (DP2) canvases.
             with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=amp_dtype is not None):

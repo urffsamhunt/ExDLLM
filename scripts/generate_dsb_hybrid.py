@@ -26,6 +26,7 @@ Usage:
 import argparse
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -78,31 +79,42 @@ class TextEmbedder(torch.nn.Module):
         return pooled  # (B, D)
 
 
-def build_hybrid(config, device):
-    """Reconstruct embedder + score net + bridge + hybrid from a config dict.
+def build_hybrid(config, device, state_dict=None, embedder=None):
+    """Reconstruct embedder + score net + bridge + hybrid from a config dict and state dict.
 
     Returns (embedder, hybrid, tokenizer).
     """
     mcfg = config["model"]
-    embedder = TextEmbedder(
-        backbone=mcfg["embedder"],
-        max_length=mcfg["max_length"],
-        trainable=False,
-        gradient_checkpointing=False,
-    ).to(device)
-    embedder.eval()
+    if embedder is None:
+        embedder = TextEmbedder(
+            backbone=mcfg["embedder"],
+            max_length=mcfg["max_length"],
+            trainable=False,
+            gradient_checkpointing=False,
+        ).to(device)
+        embedder.eval()
     tokenizer = embedder.tokenizer  # HF AutoTokenizer
 
     cond_on = bool(config["dsb"].get("condition_on_dp1", False))
     cond_dim = embedder.dim if cond_on else 0
+
+    # Auto-detect score_net architecture from state_dict if available
     score_type = mcfg.get("score_net", "mlp")
+    if state_dict is not None:
+        if any("bridge.score_net.encoder" in k for k in state_dict):
+            score_type = "transformer"
+        elif any("bridge.score_net.tag_emb" in k for k in state_dict):
+            score_type = "edit_conditioned"
+        elif any("bridge.score_net.net" in k for k in state_dict):
+            score_type = "mlp"
+
     if score_type == "transformer":
         score_net = TransformerScoreNet(
             dim=embedder.dim, hidden_dim=mcfg["hidden_dim"],
             num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
             cond_dim=cond_dim, num_heads=mcfg.get("num_heads", 8),
         )
-    elif mcfg.get("edit_conditioned_score", False):
+    elif score_type == "edit_conditioned" or mcfg.get("edit_conditioned_score", False):
         score_net = EditConditionedScoreNet(
             dim=embedder.dim, num_tags=5, hidden_dim=mcfg["hidden_dim"],
             num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
@@ -120,13 +132,29 @@ def build_hybrid(config, device):
         condition_on_dp1=bool(config["dsb"].get("condition_on_dp1", False)),
         sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
     ).to(device)
+
+    # Auto-detect head architecture and dimensions from state_dict if available
+    head_time_dim = int(mcfg.get("time_embed_dim", 128)) if mcfg.get("time_embed_dim") is not None else 128
+    condition_heads = bool(mcfg.get("condition_heads", False))
+    if state_dict is not None and "tagger.net.0.weight" in state_dict:
+        in_feat = state_dict["tagger.net.0.weight"].shape[1]
+        has_time = any("tagger.time_mlp" in k for k in state_dict)
+        if not has_time:
+            head_time_dim = 0
+            condition_heads = (in_feat == 2 * embedder.dim)
+        else:
+            if in_feat == embedder.dim + head_time_dim:
+                condition_heads = False
+            elif in_feat == 2 * embedder.dim + head_time_dim:
+                condition_heads = True
+
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
         lambda_tag=config["training"].get("lambda_tag", 1.0),
         lambda_gen=config["training"].get("lambda_gen", 1.0),
         tag_weights=mcfg.get("tag_weights"),
-        condition_heads=mcfg.get("condition_heads", False),
-        time_embed_dim=mcfg.get("time_embed_dim", 128),
+        condition_heads=condition_heads,
+        time_embed_dim=head_time_dim,
     ).to(device)
     return embedder, hybrid, tokenizer
 
@@ -185,6 +213,8 @@ def main():
     parser.add_argument("--corpus", default=None, help="corpus file for nearest-neighbor decode (plain DSB)")
     parser.add_argument("--corrupt", action="store_true",
                         help="hybrid only: corrupt the prompt first (the model is a denoiser)")
+    parser.add_argument("--corrupt_prob", type=float, default=0.3,
+                        help="token corruption probability when --corrupt is set")
     parser.add_argument("--k", type=int, default=5, help="nearest neighbors to show (plain DSB)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
@@ -194,7 +224,9 @@ def main():
     device = torch.device(resolve_device() if args.device is None else args.device)
     print(f"Device: {device}")
 
+    t_start = time.perf_counter()
     ckpt = torch.load(args.checkpoint, map_location=device)
+    t_ckpt = time.perf_counter()
     config = ckpt["config"]
     fmt = "hybrid" if "hybrid" in ckpt else "plain"
     print(f"Checkpoint format: {fmt} (dim={ckpt.get('dim')})")
@@ -214,6 +246,7 @@ def main():
             print(f"(embedder not loaded: {e})")
     embedder.eval()
     tokenizer = embedder.tokenizer
+    t_model = time.perf_counter()
 
     # 1) Embed prompt -> DP1 (per-token, for the SDE).
     enc = tokenizer([args.prompt], padding=True, truncation=True,
@@ -230,9 +263,7 @@ def main():
     print(f"{'=' * 60}\n")
 
     if fmt == "hybrid":
-        embedder2, hybrid, _ = build_hybrid(config, device)
-        if embedder_sd is not None:
-            embedder2.load_state_dict(embedder_sd)
+        _, hybrid, _ = build_hybrid(config, device, state_dict=ckpt.get("hybrid"), embedder=embedder)
         hybrid.load_state_dict(ckpt["hybrid"])
         hybrid.eval()
 
@@ -245,35 +276,49 @@ def main():
             ccfg = config["data"]["corruption"]
             noise_pool = list(range(4, min(ccfg.get("noise_vocab_size", 100) + 4,
                                            tokenizer.vocab_size)))
+            mask_p = args.corrupt_prob if args.corrupt_prob is not None else ccfg.get("mask_prob", 0.3)
             corr, _, _ = corrupt_fixed(
                 canvas_ids,
-                mask_prob=ccfg.get("mask_prob", 0.15),
+                mask_prob=mask_p,
                 mask_ratio=ccfg.get("mask_ratio", 0.8),
                 noise_pool=noise_pool,
                 mask_id=tokenizer.mask_token_id,
             )
+            # If random chance didn't hit any tokens on a short sentence, force 1-2 tokens
+            if corr == canvas_ids and len(canvas_ids) > 2:
+                for idx in range(1, min(3, len(canvas_ids) - 1)):
+                    corr[idx] = tokenizer.mask_token_id
+
             canvas_ids = corr
             corr_ids = torch.tensor([corr], device=device)
             with torch.no_grad():
                 out_c = embedder.encoder(input_ids=corr_ids,
                                          attention_mask=torch.ones_like(corr_ids))
             dp1 = out_c.last_hidden_state
-            specials = {tokenizer.bos_token_id, tokenizer.eos_token_id,
-                        tokenizer.pad_token_id, tokenizer.mask_token_id}
+            specials = {tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id}
             shown = tokenizer.decode([t for t in corr if t not in specials]).strip()
             print(f"Corrupted canvas: {shown!r}")
 
+        t_infer_start = time.perf_counter()
         x = hybrid.bridge.sample(dp1, steps=args.sde_steps)
+        t_sde = time.perf_counter()
         with torch.no_grad():
             texts = hybrid.generate_text(
-                x, tokenizer, embedder2,
+                x, tokenizer, embedder,
                 temperature=args.temperature, top_k=args.top_k, top_p=args.top_p,
                 max_iterations=args.max_iterations, max_len=args.max_len,
                 dp1=dp1, seed_ids=[canvas_ids],
             )
+        t_decode = time.perf_counter()
         print("Generated Text:")
         for t in texts:
             print(f"  {t}")
+        print(f"\n[Timing Breakdown]")
+        print(f"  Checkpoint load (CPU/Disk): {t_ckpt - t_start:.2f}s")
+        print(f"  Model initialization:       {t_model - t_ckpt:.2f}s")
+        print(f"  SDE Bridge integration:     {t_sde - t_infer_start:.3f}s")
+        print(f"  Discrete edit refinement:   {t_decode - t_sde:.3f}s")
+        print(f"  Total inference time:       {t_decode - t_infer_start:.3f}s")
     else:
         # Plain DSB: load score net into a bridge, reverse SDE.
         # The plain score net is TRAINED on mean-pooled (B, D) embeddings

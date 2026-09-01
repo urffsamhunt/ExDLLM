@@ -58,22 +58,22 @@ data:
   val_path: null
   shuffle_buffer: 100000
   val_max_batches: 100
-  corruption_scheme: "fixed"     # "fixed" | "full"
+  corruption_scheme: "full"     # "fixed" | "full" (full enables Levenshtein INSERT/DELETE/EXPAND/REPLACE)
   corruption:
-    mask_prob: 0.15
-    mask_ratio: 0.8
-    noise_vocab_size: 100
-    replace_ratio: 0.10          # (full scheme)
-    delete_ratio: 0.05           # (full scheme)
-    insert_ratio: 0.05           # (full scheme)
-    expand_ratio: 0.05           # (full scheme)
+    noise_vocab_size: 30000      # Samples from real dictionary words (top 30k)
+    mask_prob: 0.25
+    mask_ratio: 0.25             # 25% <mask_id>, 75% real words / typos
+    replace_ratio: 0.15          # 15% random real word & typo replacement (teaches REPLACE on real words)
+    delete_ratio: 0.08           # 8% words deleted (teaches INSERT / EXPAND)
+    insert_ratio: 0.08           # 8% extraneous words inserted (teaches DELETE)
+    expand_ratio: 0.05           # 5% spans compressed into [EXPAND]
     expand_prob: 0.10            # (full scheme)
     insert_prob: 0.15            # (full scheme)
     t_skew: 2.0                  # (full scheme)
     shortage_prob: 0.35          # (full scheme)
 
 training:
-  batch_size: 8
+  batch_size: 4
   learning_rate: 0.0001
   weight_decay: 0.01
   warmup_steps: 500
@@ -81,7 +81,7 @@ training:
   log_every: 10
   eval_every: 500
   diag_every: 100
-  recon_steps: 0          # reverse-SDE steps for recon_err; 0 = bridge default (1000)
+  recon_steps: 50         # reverse-SDE steps for recon_err (50 steps: fast and numerically stable)
   grad_clip: 1.0
   mixed_precision: true
   # Joint-loss weighting for the tagger / generator heads. With a frozen

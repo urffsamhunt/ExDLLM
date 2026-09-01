@@ -76,9 +76,40 @@ class ForwardCorruptor:
         if seed is not None:
             random.seed(seed)
 
-        # Pre-compute noise token pool: sample from ordinary vocab tokens
-        # We use token IDs 4..noise_vocab_size+4 to avoid special tokens
-        self.noise_pool = list(range(4, min(noise_vocab_size + 4, tokenizer.original_vocab_size)))
+        # Pre-compute noise token pool: sample from real vocabulary tokens
+        # We start at token ID 100 to skip special tokens and punctuation symbols
+        vocab_size = getattr(tokenizer, "original_vocab_size", getattr(tokenizer, "vocab_size", 50000))
+        start_id = 100
+        end_id = min(noise_vocab_size + start_id, vocab_size)
+        self.noise_pool = list(range(start_id, max(start_id + 1, end_id)))
+
+        # Standard special IDs or fallback attributes for HF tokenizers
+        self.mask_id = getattr(tokenizer, "mask_id", getattr(tokenizer, "mask_token_id", 250001))
+        self.pad_id = getattr(tokenizer, "pad_id", getattr(tokenizer, "pad_token_id", 1))
+        self.bos_id = getattr(tokenizer, "bos_id", getattr(tokenizer, "bos_token_id", 0))
+        self.eos_id = getattr(tokenizer, "eos_id", getattr(tokenizer, "eos_token_id", 2))
+        self.keep_id = getattr(tokenizer, "keep_id", 50265)
+        self.delete_id = getattr(tokenizer, "delete_id", 50266)
+        self.replace_id = getattr(tokenizer, "replace_id", 50267)
+        self.insert_id = getattr(tokenizer, "insert_id", 50268)
+        self.expand_id = getattr(tokenizer, "expand_id", 50269)
+
+        for attr, val in [
+            ("mask_id", self.mask_id),
+            ("pad_id", self.pad_id),
+            ("bos_id", self.bos_id),
+            ("eos_id", self.eos_id),
+            ("keep_id", self.keep_id),
+            ("delete_id", self.delete_id),
+            ("replace_id", self.replace_id),
+            ("insert_id", self.insert_id),
+            ("expand_id", self.expand_id),
+        ]:
+            if not hasattr(tokenizer, attr):
+                try:
+                    setattr(tokenizer, attr, val)
+                except Exception:
+                    pass
 
     def _get_random_noise_token(self, exclude_tok: int = -1) -> int:
         """Sample a random noise token from the noise pool, avoiding exclude_tok."""
@@ -87,6 +118,34 @@ class ForwardCorruptor:
             tok = (tok + 1) % len(self.noise_pool)
             return self.noise_pool[tok]
         return tok
+
+    def _get_morphological_noise_token(self, token_id: int) -> int:
+        """Perturb a token into a spelling typo or grammatical/inflection variant."""
+        try:
+            text = self.tokenizer.decode([token_id]).strip()
+            if len(text) <= 2:
+                return random.choice(self.noise_pool)
+
+            # 1. Tense/suffix perturbation
+            if text.endswith("ing") and len(text) > 4:
+                perturbed = text[:-3] + "ed"
+            elif text.endswith("ed") and len(text) > 3:
+                perturbed = text[:-2] + "ing"
+            elif text.endswith("s") and len(text) > 3:
+                perturbed = text[:-1]
+            elif len(text) >= 4:
+                # 2. Transposition / typo (swap adjacent characters)
+                idx = random.randint(1, len(text) - 2)
+                perturbed = text[:idx] + text[idx+1] + text[idx] + text[idx+2:]
+            else:
+                perturbed = text + "s"
+
+            encoded = self.tokenizer.encode(perturbed, add_special_tokens=False)
+            if encoded:
+                return encoded[0]
+        except Exception:
+            pass
+        return random.choice(self.noise_pool)
 
 
     # ── Public API ────────────────────────────────────────────────────
@@ -395,11 +454,15 @@ class ForwardCorruptor:
     # ── Corruption Steps ───────────────────────────────────────────────
 
     def _apply_replace(self, ids: List[int]) -> List[int]:
-        """Randomly replace some tokens with noise tokens."""
+        """Randomly replace some tokens with noise tokens or morphological variants."""
         result = list(ids)
         for i in range(len(result)):
             if random.random() < self.replace_ratio:
-                result[i] = random.choice(self.noise_pool)
+                # 60% real dictionary words from the noise pool, 40% morphological / typo perturbations
+                if random.random() < 0.6:
+                    result[i] = random.choice(self.noise_pool)
+                else:
+                    result[i] = self._get_morphological_noise_token(result[i])
         return result
 
     def _apply_delete(self, ids: List[int]) -> List[int]:

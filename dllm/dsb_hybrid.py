@@ -178,12 +178,16 @@ class TaggerHead(nn.Module):
     def __init__(self, dim: int, time_embed_dim: int = 128, cond_dim: int = 0):
         super().__init__()
         self.cond_dim = cond_dim
-        self.time_mlp = nn.Sequential(
-            nn.Linear(1, time_embed_dim),
-            nn.SiLU(),
-            nn.Linear(time_embed_dim, time_embed_dim),
-            nn.SiLU(),
-        )
+        self.time_embed_dim = time_embed_dim
+        if time_embed_dim > 0:
+            self.time_mlp = nn.Sequential(
+                nn.Linear(1, time_embed_dim),
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, time_embed_dim),
+                nn.SiLU(),
+            )
+        else:
+            self.time_mlp = None
         self.net = nn.Sequential(
             nn.Linear(dim + cond_dim + time_embed_dim, dim),
             nn.GELU(),
@@ -199,9 +203,10 @@ class TaggerHead(nn.Module):
             if cond is None:
                 raise ValueError("head built with cond_dim > 0 requires cond")
             h = torch.cat([cond, h], dim=-1)
-        t_emb = self.time_mlp(t.reshape(-1, 1))          # (B, T)
-        t_emb = t_emb.unsqueeze(1).expand(-1, h.shape[1], -1)
-        h = torch.cat([h, t_emb], dim=-1)
+        if self.time_mlp is not None:
+            t_emb = self.time_mlp(t.reshape(-1, 1))          # (B, T)
+            t_emb = t_emb.unsqueeze(1).expand(-1, h.shape[1], -1)
+            h = torch.cat([h, t_emb], dim=-1)
         return self.net(h)
 
 
@@ -215,12 +220,16 @@ class GenHead(nn.Module):
                  time_embed_dim: int = 128, cond_dim: int = 0):
         super().__init__()
         self.cond_dim = cond_dim
-        self.time_mlp = nn.Sequential(
-            nn.Linear(1, time_embed_dim),
-            nn.SiLU(),
-            nn.Linear(time_embed_dim, time_embed_dim),
-            nn.SiLU(),
-        )
+        self.time_embed_dim = time_embed_dim
+        if time_embed_dim > 0:
+            self.time_mlp = nn.Sequential(
+                nn.Linear(1, time_embed_dim),
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, time_embed_dim),
+                nn.SiLU(),
+            )
+        else:
+            self.time_mlp = None
         self.net = nn.Sequential(
             nn.Linear(dim + cond_dim + time_embed_dim, dim),
             nn.GELU(),
@@ -236,8 +245,9 @@ class GenHead(nn.Module):
             if cond is None:
                 raise ValueError("head built with cond_dim > 0 requires cond")
             h = torch.cat([cond, h], dim=-1)
-        t_emb = self.time_mlp(t.reshape(-1, 1))          # (N, T)
-        h = torch.cat([h, t_emb], dim=-1)
+        if self.time_mlp is not None:
+            t_emb = self.time_mlp(t.reshape(-1, 1))          # (N, T)
+            h = torch.cat([h, t_emb], dim=-1)
         return self.net(h)
 
 
@@ -353,7 +363,7 @@ class DSBHybrid(nn.Module):
             w = self._tag_weights.to(tag_logits.device)
         else:
             w = None
-        loss_tag = F.cross_entropy(tag_logits.permute(0, 2, 1), tag_labels,
+        loss_tag = F.cross_entropy(tag_logits.permute(0, 2, 1).float(), tag_labels,
                                    weight=w, ignore_index=-100)
 
         # 4) Generator head, evaluated ONLY at REPLACE positions (sparse) so we
@@ -365,7 +375,7 @@ class DSBHybrid(nn.Module):
             t_sel = t.repeat_interleave(x_t.shape[1], dim=0)[select]
             c_sel = dp1.reshape(-1, x_t.shape[-1])[select]
             gl = self.generator(xp, t_sel, cond=c_sel)         # (n, V)
-            loss_gen = F.cross_entropy(gl, lb)
+            loss_gen = F.cross_entropy(gl.float(), lb.clamp(0, gl.shape[-1] - 1))
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
 
@@ -407,7 +417,7 @@ class DSBHybrid(nn.Module):
         """Tagger + generator cross-entropy on the SDE embedding x_t."""
         tag_logits = self.tagger(x_t, t, cond=dp1)         # (B, S, NUM_TAGS)
         w = self._tag_weights.to(tag_logits.device) if self._tag_weights is not None else None
-        loss_tag = F.cross_entropy(tag_logits.permute(0, 2, 1), tag_labels,
+        loss_tag = F.cross_entropy(tag_logits.permute(0, 2, 1).float(), tag_labels,
                                    weight=w, ignore_index=-100)
         select = gen_labels.reshape(-1) != self.gen_ignore_index
         if select.any():
@@ -415,7 +425,8 @@ class DSBHybrid(nn.Module):
             lb = gen_labels.reshape(-1)[select]
             t_sel = t.repeat_interleave(x_t.shape[1], dim=0)[select]
             c_sel = dp1.reshape(-1, x_t.shape[-1])[select]
-            loss_gen = F.cross_entropy(self.generator(xp, t_sel, cond=c_sel), lb)
+            gl = self.generator(xp, t_sel, cond=c_sel)
+            loss_gen = F.cross_entropy(gl.float(), lb.clamp(0, gl.shape[-1] - 1))
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
         return loss_tag, loss_gen
@@ -543,26 +554,27 @@ class DSBHybrid(nn.Module):
         return results
 
     @staticmethod
-    def _sample_topk(logits: torch.Tensor, temperature, top_k, top_p) -> List[int]:
-        """Top-k / top-p sampling over vocab logits -> token ids (per position)."""
-        logits = logits / max(temperature, 1e-8)
-        probs = F.softmax(logits, dim=-1)          # (S, V)
+    def _sample_topk(logits: torch.Tensor, temperature: float, top_k: int, top_p: float) -> List[int]:
+        """Vectorized top-k / top-p sampling over vocab logits -> token ids (per position)."""
+        if logits.numel() == 0:
+            return []
+        # Move the small (N_replace, 250002) projection to CPU for instantaneous AVX quickselect
+        # rather than triggering a slow 80s Level-Zero JIT compilation stall on Intel XPU.
+        logits = logits.detach().to("cpu", dtype=torch.float32) / max(temperature, 1e-8)
         k = min(top_k, logits.shape[-1])
-        ids = []
-        for pos in range(logits.shape[0]):
-            p = probs[pos]
-            topk_vals, topk_idx = p.topk(k, dim=-1)
-            cum = topk_vals.cumsum(-1)
+        topk_vals, topk_idx = logits.topk(k, dim=-1)   # (N, K) on CPU
+        topk_probs = F.softmax(topk_vals, dim=-1)      # (N, K)
+
+        if top_p < 1.0:
+            cum = topk_probs.cumsum(dim=-1)
             keep = cum <= top_p
-            topk_vals = torch.where(keep, topk_vals, torch.zeros_like(topk_vals))
-            if topk_vals.sum() <= 1e-8:
-                # no candidate passed top-p; fall back to the top-1 token
-                ids.append(topk_idx[0].item())
-                continue
-            topk_vals = topk_vals / topk_vals.sum()
-            idx = int(torch.multinomial(topk_vals, 1).item())
-            ids.append(int(topk_idx[idx].item()))
-        return ids
+            keep[:, 0] = True  # Always preserve at least top-1
+            topk_probs = torch.where(keep, topk_probs, torch.zeros_like(topk_probs))
+            topk_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+        sampled_indices = torch.multinomial(topk_probs, num_samples=1)  # (N, 1)
+        chosen_tokens = topk_idx.gather(1, sampled_indices).squeeze(-1)  # (N,)
+        return chosen_tokens.tolist()
 
     @staticmethod
     def _apply_edits(canvas_ids, tags, gen_toks, bos, eos, pad, M):
@@ -668,11 +680,22 @@ class DSBHybrid(nn.Module):
                                           device=c.device, dtype=c.dtype)
                         c_row = torch.cat([c, pad], dim=1)
                 tag_logits = self.tagger(emb, t_row, cond=c_row)[0]     # (L, T)
-                # cur[b] is already (L, D) -> generator returns (L, V) directly.
-                gen_logits = self.generator(cur[b], t_row.expand(L),
-                                            cond=(c_row[0] if c_row is not None else None))  # (L, V)
                 tags = tag_logits.argmax(-1).tolist()
-                gen_toks = self._sample_topk(gen_logits, temperature, top_k, top_p)
+
+                # Sparse generator evaluation: only evaluate the 250k-vocab GenHead
+                # and top-k sampling at positions that actually need token generation.
+                gen_positions = [i for i, tg in enumerate(tags) if tg in (REPLACE, INSERT)]
+                gen_toks = list(canvases[b])
+                if gen_positions:
+                    pos_tensor = torch.tensor(gen_positions, device=cur[b].device)
+                    cur_sel = cur[b][pos_tensor]
+                    t_sel = t_row.expand(len(gen_positions))
+                    c_sel = c_row[0][pos_tensor] if c_row is not None else None
+                    gen_logits = self.generator(cur_sel, t_sel, cond=c_sel)  # (N_gen, V)
+                    sampled_tokens = self._sample_topk(gen_logits, temperature, top_k, top_p)
+                    for pos, tok_id in zip(gen_positions, sampled_tokens):
+                        if pos < len(gen_toks):
+                            gen_toks[pos] = tok_id
 
                 # Apply edits -> genuinely variable-length output (INSERT grows,
                 # DELETE trims, EXPAND splits), capped at max_len.
@@ -686,20 +709,20 @@ class DSBHybrid(nn.Module):
                     changed = True
                 next_canvases.append(new_ids)
 
+            canvases = next_canvases
+            if not changed:
+                break
+
             # Re-embed: batch all rows padded to the longest current length.
-            max_L = max((len(c) for c in next_canvases), default=0)
+            max_L = max((len(c) for c in canvases), default=0)
             batch_ids = torch.full((B, max_L), pad, dtype=torch.long, device=device)
             batch_attn = torch.zeros(B, max_L, dtype=torch.long, device=device)
             for b in range(B):
-                row = torch.tensor(next_canvases[b], dtype=torch.long, device=device)
+                row = torch.tensor(canvases[b], dtype=torch.long, device=device)
                 batch_ids[b, :len(row)] = row
                 batch_attn[b, :len(row)] = 1
             embedded = embedder.embed_ids(batch_ids, batch_attn)  # (B, max_L, D)
-            next_emb = [embedded[b, :len(next_canvases[b])] for b in range(B)]
-            canvases = next_canvases
-            cur = next_emb
-            if not changed:
-                break
+            cur = [embedded[b, :len(canvases[b])] for b in range(B)]
 
         # Final decode.
         results = []
@@ -744,11 +767,11 @@ def corrupt_full(clean_ids, corruptor):
     tag_token_ids = corruptor.compute_tag_labels(noisy, list(clean_ids))
     # Translate tokenizer tag IDs to our 0..4 indices.
     tid2idx = {
-        corruptor.tokenizer.keep_id: KEEP,
-        corruptor.tokenizer.delete_id: DELETE,
-        corruptor.tokenizer.replace_id: REPLACE,
-        corruptor.tokenizer.insert_id: INSERT,
-        corruptor.tokenizer.expand_id: EXPAND,
+        getattr(corruptor.tokenizer, "keep_id", getattr(corruptor, "keep_id", 50265)): KEEP,
+        getattr(corruptor.tokenizer, "delete_id", getattr(corruptor, "delete_id", 50266)): DELETE,
+        getattr(corruptor.tokenizer, "replace_id", getattr(corruptor, "replace_id", 50267)): REPLACE,
+        getattr(corruptor.tokenizer, "insert_id", getattr(corruptor, "insert_id", 50268)): INSERT,
+        getattr(corruptor.tokenizer, "expand_id", getattr(corruptor, "expand_id", 50269)): EXPAND,
     }
     tags = [tid2idx.get(tok, KEEP) for tok in tag_token_ids]
     # Gen targets: for REPLACE/INSERT positions, record the clean token that
