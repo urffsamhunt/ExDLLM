@@ -291,12 +291,15 @@ def train(args, config):
                         bl = bridge.baseline_loss(dp1)
                         sig = bridge.signal_captured(dp1, dp2)
                         recon = bridge.reconstruction_error(dp1, dp2, steps=recon_steps)
+                        sampled_e = bridge.sample(dp1[:16], steps=recon_steps)
+                        cos_sim = F.cosine_similarity(sampled_e, dp2[:16], dim=-1).mean()
                         # Identity baseline: ||DP2 - DP1||. recon_err at or above
                         # this means the bridge is not transporting at all (it
                         # would do no worse than returning the input unchanged).
                         ident = (dp2 - dp1).norm(dim=-1).mean()
                     print(f"  [diag] baseline {bl.item():.4f}, "
                           f"signal {sig[2]*100:.1f}%, "
+                          f"cos_sim {cos_sim.item():.3f}, "
                           f"recon_err {recon.item():.4f} "
                           f"(identity {ident.item():.4f})")
 

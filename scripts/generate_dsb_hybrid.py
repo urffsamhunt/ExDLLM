@@ -44,18 +44,20 @@ class TextEmbedder(torch.nn.Module):
     def __init__(self, backbone="roberta-base", max_length=128, trainable=False,
                  gradient_checkpointing=False):
         super().__init__()
-        from transformers import AutoTokenizer, AutoModel
+        from transformers import AutoTokenizer, AutoModelForMaskedLM
         self.tokenizer = AutoTokenizer.from_pretrained(backbone)
-        self.encoder = AutoModel.from_pretrained(backbone)
+        self.model = AutoModelForMaskedLM.from_pretrained(backbone)
+        self.encoder = getattr(self.model, self.model.base_model_prefix, self.model)
+        self.lm_head = getattr(self.model, "lm_head", getattr(self.model, "cls", None))
         self.max_length = max_length
-        self.dim = self.encoder.config.hidden_size
+        self.dim = self.model.config.hidden_size
         self.trainable = trainable
         if gradient_checkpointing:
-            self.encoder.gradient_checkpointing_enable()
+            self.model.gradient_checkpointing_enable()
         if not trainable:
-            for p in self.encoder.parameters():
+            for p in self.model.parameters():
                 p.requires_grad = False
-            self.encoder.eval()
+            self.model.eval()
 
     def tokenize(self, texts):
         return self.tokenizer(texts, padding=True, truncation=True,
@@ -66,6 +68,15 @@ class TextEmbedder(torch.nn.Module):
         """Return PER-TOKEN embeddings (B, S, D), not pooled."""
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         return out.last_hidden_state  # (B, S, D)
+
+    def decode_logits(self, hidden_states):
+        """Decode Layer 12 contextual hidden states (..., D) -> (..., V) vocabulary logits."""
+        if self.lm_head is not None:
+            return self.lm_head(hidden_states)
+        elif hasattr(self.model, "get_output_embeddings"):
+            return self.model.get_output_embeddings()(hidden_states)
+        else:
+            raise AttributeError("Model has no lm_head")
 
     def embed_pool(self, texts):
         """Mean-pooled document embedding (B, D) for nearest-neighbour search."""
@@ -131,6 +142,7 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=bool(config["dsb"].get("condition_on_dp1", False)),
         sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
+        prediction_target=config["dsb"].get("prediction_target", "u"),
     ).to(device)
 
     # Auto-detect head architecture and dimensions from state_dict if available
@@ -148,6 +160,8 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
             elif in_feat == 2 * embedder.dim + head_time_dim:
                 condition_heads = True
 
+    embed_weight = embedder.encoder.get_input_embeddings().weight
+    lm_head = getattr(embedder, "lm_head", None)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
         lambda_tag=config["training"].get("lambda_tag", 1.0),
@@ -155,6 +169,9 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
         tag_weights=mcfg.get("tag_weights"),
         condition_heads=condition_heads,
         time_embed_dim=head_time_dim,
+        embed_weight=embed_weight,
+        tie_weights=mcfg.get("tie_weights", True),
+        lm_head=lm_head,
     ).to(device)
     return embedder, hybrid, tokenizer
 
@@ -173,6 +190,7 @@ def build_bridge(config, embedder, device):
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=cond_on,
         sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
+        prediction_target=config["dsb"].get("prediction_target", "u"),
     ).to(device)
     return bridge
 
@@ -213,8 +231,16 @@ def main():
     parser.add_argument("--corpus", default=None, help="corpus file for nearest-neighbor decode (plain DSB)")
     parser.add_argument("--corrupt", action="store_true",
                         help="hybrid only: corrupt the prompt first (the model is a denoiser)")
-    parser.add_argument("--corrupt_prob", type=float, default=0.3,
-                        help="token corruption probability when --corrupt is set")
+    parser.add_argument("--corrupt_prob", type=float, default=None,
+                        help="token corruption probability when --corrupt is set (default: from config)")
+    parser.add_argument("--repetition_penalty", type=float, default=1.3,
+                        help="penalty factor for repeated tokens during generation (>1.0 reduces repetitions)")
+    parser.add_argument("--translate", action="store_true",
+                        help="Translation mode: append response mask canvas after prompt and decode translation")
+    parser.add_argument("--target_len", type=int, default=None,
+                        help="Number of initial mask slots for translation response canvas")
+    parser.add_argument("--decode_mode", choices=["genhead", "lm_head", "nearest"], default="genhead",
+                        help="Token decode mode: 'genhead' (learned GenHead MLP), 'lm_head' (backbone pretrained MLM head), or 'nearest' (Layer 0 cosine similarity)")
     parser.add_argument("--k", type=int, default=5, help="nearest neighbors to show (plain DSB)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
@@ -264,16 +290,34 @@ def main():
 
     if fmt == "hybrid":
         _, hybrid, _ = build_hybrid(config, device, state_dict=ckpt.get("hybrid"), embedder=embedder)
-        hybrid.load_state_dict(ckpt["hybrid"])
+        sd = ckpt["hybrid"]
+        if config.get("model", {}).get("tie_weights", True) and "generator.net.3.weight" in sd:
+            if not ckpt.get("config", {}).get("model", {}).get("tie_weights", False):
+                sd = {k: v for k, v in sd.items() if k != "generator.net.3.weight"}
+        hybrid.load_state_dict(sd, strict=False)
         hybrid.eval()
 
-        # The hybrid is a DENOISER (trained corrupted -> clean on the same
-        # sentence), so the meaningful run corrupts the prompt first; from a
-        # clean prompt it will (correctly) reconstruct the prompt itself.
+        is_translation = args.translate or ("tsv" in str(config.get("data", {}).get("train_path", "")).lower())
         canvas_ids = ids[0].tolist()
-        if args.corrupt:
+
+        if is_translation and not args.corrupt:
+            # Translation mode: Prompt + Target Mask canvas
+            src_ids = tokenizer.encode(args.prompt.strip(), add_special_tokens=True)
+            t_len = args.target_len if args.target_len is not None else max(8, int(len(src_ids) * 1.3))
+            mask_id = tokenizer.mask_token_id or 250001
+            canvas_ids = (src_ids + [mask_id] * t_len + [tokenizer.eos_token_id])[:config["model"]["max_length"]]
+
+            corr_ids = torch.tensor([canvas_ids], device=device)
+            with torch.no_grad():
+                out_c = embedder.encoder(input_ids=corr_ids,
+                                         attention_mask=torch.ones_like(corr_ids))
+            dp1 = out_c.last_hidden_state
+            print(f"Translation canvas: prompt ({len(src_ids)} tokens) + {t_len} target response masks")
+        elif args.corrupt:
             from dllm.dsb_hybrid import corrupt_fixed
-            ccfg = config["data"]["corruption"]
+            ccfg = config.get("data", {}).get("corruption", {}) if isinstance(config.get("data", {}), dict) else {}
+            if not isinstance(ccfg, dict):
+                ccfg = {}
             noise_pool = list(range(4, min(ccfg.get("noise_vocab_size", 100) + 4,
                                            tokenizer.vocab_size)))
             mask_p = args.corrupt_prob if args.corrupt_prob is not None else ccfg.get("mask_prob", 0.3)
@@ -284,7 +328,6 @@ def main():
                 noise_pool=noise_pool,
                 mask_id=tokenizer.mask_token_id,
             )
-            # If random chance didn't hit any tokens on a short sentence, force 1-2 tokens
             if corr == canvas_ids and len(canvas_ids) > 2:
                 for idx in range(1, min(3, len(canvas_ids) - 1)):
                     corr[idx] = tokenizer.mask_token_id
@@ -308,11 +351,22 @@ def main():
                 temperature=args.temperature, top_k=args.top_k, top_p=args.top_p,
                 max_iterations=args.max_iterations, max_len=args.max_len,
                 dp1=dp1, seed_ids=[canvas_ids],
+                repetition_penalty=args.repetition_penalty,
+                decode_mode=args.decode_mode,
             )
         t_decode = time.perf_counter()
-        print("Generated Text:")
+        print("Generated Output:")
         for t in texts:
-            print(f"  {t}")
+            if is_translation:
+                # Separate prompt from generated translation response if possible
+                prompt_clean = args.prompt.strip()
+                translation_part = t
+                if t.startswith(prompt_clean):
+                    translation_part = t[len(prompt_clean):].strip()
+                print(f"  [Full Canvas]   {t}")
+                print(f"  [Translation]   {translation_part}")
+            else:
+                print(f"  {t}")
         print(f"\n[Timing Breakdown]")
         print(f"  Checkpoint load (CPU/Disk): {t_ckpt - t_start:.2f}s")
         print(f"  Model initialization:       {t_model - t_ckpt:.2f}s")

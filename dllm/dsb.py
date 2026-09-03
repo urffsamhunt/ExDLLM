@@ -223,6 +223,7 @@ class DiffSchrodingerBridge(nn.Module):
         beta_max: float = 0.02,
         condition_on_dp1: bool = False,
         sigma2_schedule: str = "ou",
+        prediction_target: str = "u",   # "u" (score matching) or "x0" (direct DP2 prediction)
     ):
         super().__init__()
         self.dim = dim
@@ -233,6 +234,9 @@ class DiffSchrodingerBridge(nn.Module):
         # reconstruction_error. With conditioning, _estimate_target recovers
         # E[DP2 | x_t, DP1] and the floor drops to the noise realization.
         self.condition_on_dp1 = condition_on_dp1
+        if prediction_target not in ("u", "x0"):
+            raise ValueError(f"Unknown prediction_target: {prediction_target}")
+        self.prediction_target = prediction_target
 
         if beta_schedule == "linear":
             betas = linear_beta_schedule(num_steps, beta_min, beta_max)
@@ -313,7 +317,8 @@ class DiffSchrodingerBridge(nn.Module):
 
         Returns:
             x_t: noisy point.
-            score: exact conditional score target (mu_t - x_t) / sigma_t^2.
+            target: training target — either u = mu_t - x_t (u-parametrization)
+                    or dp2 directly (x0-prediction), depending on prediction_target.
         """
         t_b = t.reshape(-1, 1, 1) if dp1.dim() == 3 else t.reshape(-1, 1)
         alpha_t = self._alpha_at(t).reshape_as(t_b)
@@ -323,14 +328,20 @@ class DiffSchrodingerBridge(nn.Module):
         sigma_t = torch.sqrt(sigma2_t + 1e-8)
         z = torch.randn_like(dp1)
         x_t = mu + sigma_t * z
-        # u-parametrization: predict u = mu - x_t (== -sigma_t * z) instead of
-        # the raw score s = u / sigma2_t. The score spans ~4 orders of magnitude
-        # across t (sigma2: 1e-4 -> 0.5), which a small MLP cannot represent —
-        # the chronic cause of low "signal captured". Since
-        # sigma2 * ||s_pred - s*||^2 == ||u_pred - u*||^2, the u-parametrization
-        # is the SAME objective without the dynamic-range problem.
-        u = mu - x_t
-        return x_t, u
+
+        if self.prediction_target == "x0":
+            # x0-prediction: the network directly predicts the clean target DP2.
+            # No algebraic inversion needed. No (1-alpha_t) singularity.
+            return x_t, dp2
+        else:
+            # u-parametrization: predict u = mu - x_t (== -sigma_t * z) instead of
+            # the raw score s = u / sigma2_t. The score spans ~4 orders of magnitude
+            # across t (sigma2: 1e-4 -> 0.5), which a small MLP cannot represent —
+            # the chronic cause of low "signal captured". Since
+            # sigma2 * ||s_pred - s*||^2 == ||u_pred - u*||^2, the u-parametrization
+            # is the SAME objective without the dynamic-range problem.
+            u = mu - x_t
+            return x_t, u
 
     # ── Training loss: denoising score matching ───────────────────────────────
 
@@ -341,12 +352,13 @@ class DiffSchrodingerBridge(nn.Module):
         t: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Denoising score-matching loss for the bridge, in the u-parametrization.
+        Denoising score-matching loss for the bridge.
 
+        In u-parametrization (prediction_target='u'):
             L = E_t || u_theta(x_t, t, DP1) - (mu_t - x_t) ||^2
 
-        This is exactly the sigma^2-weighted score-matching objective (since
-        u = sigma2 * s), but without the ~1e4 dynamic range of the raw score.
+        In x0-prediction (prediction_target='x0'):
+            L = E_t || x0_theta(x_t, t, DP1) - DP2 ||^2
 
         Args:
             dp1: (B, D) or (B, S, D) input.
@@ -359,9 +371,9 @@ class DiffSchrodingerBridge(nn.Module):
         B = dp1.shape[0]
         if t is None:
             t = torch.rand(B, device=dp1.device)
-        x_t, u_target = self.forward_sample(dp1, dp2, t)
-        u_pred = self.score_predict(x_t, t, dp1=dp1)
-        loss = F.mse_loss(u_pred, u_target)
+        x_t, target = self.forward_sample(dp1, dp2, t)
+        pred = self.score_predict(x_t, t, dp1=dp1)
+        loss = F.mse_loss(pred, target)
         return loss
 
     # ── Interpretability diagnostics ──────────────────────────────────────────
@@ -455,10 +467,18 @@ class DiffSchrodingerBridge(nn.Module):
         """
         Recover the (unknown) output DP2 from the learned score.
 
-        The score net predicts u = mu - x_t (u-parametrization), so
+        In x0-prediction mode, the score net directly outputs DP2 — no
+        algebraic inversion or damping needed.
+
+        In u-parametrization, the score net predicts u = mu - x_t, so
         mu = x + u, and DP2 = (mu - alpha DP1) / (1 - alpha). This lets the
         reverse drift point along the relative displacement toward the output.
         """
+        if self.prediction_target == "x0":
+            # Direct prediction — the score net IS the target estimator.
+            return self.score_predict(x, t, dp1=dp1)
+
+        # u-parametrization path (original)
         alpha_t = self._alpha_at(t).reshape(-1, 1, 1) if x.dim() == 3 else self._alpha_at(t).reshape(-1, 1)
         u = self.score_predict(x, t, dp1=dp1)
         mu = x + u
@@ -478,41 +498,52 @@ class DiffSchrodingerBridge(nn.Module):
         return_trajectory: bool = False,
     ) -> torch.Tensor:
         """
-        Generate DP2 from DP1 by integrating the bridge FORWARD in time.
+        Generate DP2 from DP1 by stepping the bridge FORWARD in time.
 
-        The bridge is pinned at DP1 (t=0, sigma^2~0) and pulled toward DP2
-        (t=1). Generation therefore integrates the forward SDE from t=0 to
-        t=1, replacing the unknown DP2 in the drift with its score-based
-        estimate at each step, and returns the final target estimate (not the
-        noisy terminal state x, whose marginal variance sigma^2(1)~0.5 is
-        large).
+        Uses the exact closed-form Markov transition step:
+            x_{k+1} = (1 - alpha_{k->k+1}) * dp2_est + alpha_{k->k+1} * x_k + noise
+        where:
+            alpha_{k->k+1} = alpha_{k+1} / alpha_k
+            sigma^2_{k->k+1} = max(0, sigma^2_{k+1} - (alpha_{k->k+1})^2 * sigma^2_k)
+
+        This provides exact, stable forward integration from DP1 (t=0) to DP2 (t=1)
+        without Euler discretization under-integration or noise explosion.
         """
         steps = steps or self.num_steps
-        dt = 1.0 / steps
+        t_grid = torch.linspace(0.0, 1.0, steps + 1, device=dp1.device)
         x = dp1.clone()
         traj = [x]
         dp2_est = dp1.clone()
-        for i in range(steps):
-            t = torch.full((x.shape[0],), (i + 0.5) * dt, device=x.device)
-            sigma2_t = self._sigma2_at(t).reshape(-1, 1, 1) if x.dim() == 3 else self._sigma2_at(t).reshape(-1, 1)
-            beta_t = self._beta_at(t).reshape_as(sigma2_t)
-            # Forward drift toward the score-recovered target.
-            dp2_est = self._estimate_target(x, t, dp1)
-            drift = (beta_t * (dp2_est - x)).clamp(-50.0, 50.0)
-            # Noise coefficient g^2 from the Fokker-Planck consistency condition
-            # d(sigma2)/dt = -2*beta*sigma2 + g^2, so the sampled marginals match
-            # the schedule the score net was trained on. For the OU schedule this
-            # gives g^2 = beta; for the bridge schedule g^2 = 2*beta*alpha, which
-            # vanishes at both endpoints (pinned DP1/DP2).
-            alpha_t = self._alpha_at(t).reshape_as(sigma2_t)
-            if self.sigma2_schedule == "bridge":
-                g2 = 2.0 * beta_t * alpha_t
-            else:
-                g2 = beta_t
+
+        is_3d = (dp1.dim() == 3)
+        B = dp1.shape[0]
+
+        for k in range(steps):
+            t_k = t_grid[k]
+            t_next = t_grid[k + 1]
+
+            a_k = self._alpha_at(t_k)
+            a_next = self._alpha_at(t_next)
+            s2_k = self._sigma2_at(t_k)
+            s2_next = self._sigma2_at(t_next)
+
+            a_step = (a_next / (a_k + 1e-8)).clamp(0.0, 1.0)
+            var_step = (s2_next - (a_step ** 2) * s2_k).clamp(min=0.0)
+
+            # Broadcast shapes for 2D vs 3D tensors
+            a_step_b = a_step.view(1, 1, 1) if is_3d else a_step.view(1, 1)
+            var_step_b = var_step.view(1, 1, 1) if is_3d else var_step.view(1, 1)
+
+            t_vec = torch.full((B,), t_k.item(), device=dp1.device)
+            dp2_est = self._estimate_target(x, t_vec, dp1)
+
+            x_mean = (1.0 - a_step_b) * dp2_est + a_step_b * x
             noise = torch.randn_like(x)
-            x = x + drift * dt + torch.sqrt(g2 * dt + 1e-8) * noise
+            x = x_mean + torch.sqrt(var_step_b + 1e-8) * noise
+
             if return_trajectory:
                 traj.append(x.clone())
+
         if return_trajectory:
             return torch.stack(traj)
-        return dp2_est
+        return x

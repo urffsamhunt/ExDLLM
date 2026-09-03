@@ -214,10 +214,17 @@ class GenHead(nn.Module):
     """Predict the clean token at REPLACE positions (sparse projection).
 
     Same t + DP1 conditioning rationale as ``TaggerHead``.
+    When lm_head is provided (from AutoModelForMaskedLM), initializes weights from
+    the pretrained LM head (dense, layer_norm, decoder weight, and vocab bias),
+    giving instant zero-shot MLM prediction quality on Layer 12 contextual hidden states.
+    When embed_weight is provided without lm_head, initializes/ties the final projection.
     """
 
     def __init__(self, dim: int, vocab_size: int,
-                 time_embed_dim: int = 128, cond_dim: int = 0):
+                 time_embed_dim: int = 128, cond_dim: int = 0,
+                 embed_weight: Optional[torch.Tensor] = None,
+                 tie_weights: bool = True,
+                 lm_head: Optional[nn.Module] = None):
         super().__init__()
         self.cond_dim = cond_dim
         self.time_embed_dim = time_embed_dim
@@ -236,6 +243,37 @@ class GenHead(nn.Module):
             nn.LayerNorm(dim),
             nn.Linear(dim, vocab_size),
         )
+        if lm_head is not None:
+            with torch.no_grad():
+                # Zero out weights for cond and time slices initially so GenHead
+                # behaves identically to the pretrained lm_head on x at step 0
+                self.net[0].weight.zero_()
+                if hasattr(lm_head, "dense") and hasattr(lm_head.dense, "weight"):
+                    self.net[0].weight[:, :dim].copy_(lm_head.dense.weight)
+                    if hasattr(lm_head.dense, "bias") and lm_head.dense.bias is not None:
+                        self.net[0].bias.copy_(lm_head.dense.bias)
+                if hasattr(lm_head, "layer_norm") and hasattr(lm_head.layer_norm, "weight"):
+                    self.net[2].weight.copy_(lm_head.layer_norm.weight)
+                    if hasattr(lm_head.layer_norm, "bias") and lm_head.layer_norm.bias is not None:
+                        self.net[2].bias.copy_(lm_head.layer_norm.bias)
+                if hasattr(lm_head, "decoder") and hasattr(lm_head.decoder, "weight"):
+                    self.net[3].weight.copy_(lm_head.decoder.weight)
+                elif embed_weight is not None:
+                    self.net[3].weight.copy_(embed_weight)
+                if hasattr(lm_head, "bias") and lm_head.bias is not None:
+                    self.net[3].bias.copy_(lm_head.bias)
+                elif hasattr(lm_head, "decoder") and hasattr(lm_head.decoder, "bias") and lm_head.decoder.bias is not None:
+                    self.net[3].bias.copy_(lm_head.decoder.bias)
+            if tie_weights:
+                if hasattr(lm_head, "decoder") and hasattr(lm_head.decoder, "weight"):
+                    self.net[3].weight = lm_head.decoder.weight
+                elif embed_weight is not None:
+                    self.net[3].weight = embed_weight
+        elif embed_weight is not None:
+            with torch.no_grad():
+                self.net[3].weight.copy_(embed_weight)
+            if tie_weights:
+                self.net[3].weight = embed_weight
 
     def forward(self, x: torch.Tensor, t: torch.Tensor,
                 cond: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -270,6 +308,9 @@ class DSBHybrid(nn.Module):
         gen_ignore_index: int = -100,
         condition_heads: bool = False,
         time_embed_dim: int = 128,
+        embed_weight: Optional[torch.Tensor] = None,
+        tie_weights: bool = True,
+        lm_head: Optional[nn.Module] = None,
     ):
         super().__init__()
         self.bridge: DiffSchrodingerBridge = bridge
@@ -279,10 +320,15 @@ class DSBHybrid(nn.Module):
         self.tagger = TaggerHead(dim, time_embed_dim=time_embed_dim,
                                  cond_dim=head_cond_dim)
         self.generator = GenHead(dim, vocab_size, time_embed_dim=time_embed_dim,
-                                 cond_dim=head_cond_dim)
+                                 cond_dim=head_cond_dim,
+                                 embed_weight=embed_weight,
+                                 tie_weights=tie_weights,
+                                 lm_head=lm_head)
         self.lambda_tag = lambda_tag
         self.lambda_gen = lambda_gen
         self.gen_ignore_index = gen_ignore_index
+        self.embed_weight = embed_weight
+        self.lm_head = lm_head
         if tag_weights is not None:
             self.register_buffer(
                 "_tag_weights",
@@ -328,9 +374,17 @@ class DSBHybrid(nn.Module):
         noisy_ids: torch.Tensor,    # (B, S) corrupted token ids
         attention_mask: torch.Tensor,  # (B, S)
         t: Optional[torch.Tensor] = None,
+        expose_ratio: float = 0.0,  # scheduled sampling: probability of using SDE reconstruction for GenHead
     ) -> Tuple[torch.Tensor, dict]:  # type: ignore[type-arg]
         """
         Joint loss = score_matching + lambda_tag * tag_ce + lambda_gen * gen_ce.
+
+        When ``expose_ratio > 0``, the generator head is occasionally trained
+        on the SDE's own imperfect reconstruction (``bridge.sample(dp1)``) at
+        ``t=1`` instead of the pristine bridge sample ``x_t``. This **scheduled
+        sampling** technique closes the train-test distribution gap that causes
+        GenHead to see near-clean embeddings during training but noisy
+        reconstructions during inference.
 
         Returns (total_loss, dict) with per-term losses.
         """
@@ -368,12 +422,26 @@ class DSBHybrid(nn.Module):
 
         # 4) Generator head, evaluated ONLY at REPLACE positions (sparse) so we
         #    never materialize (B, S, V) vocab logits.
+        #
+        #    Scheduled Sampling: with probability `expose_ratio`, evaluate GenHead
+        #    on the SDE's own reconstruction (bridge.sample) at t=1 instead of
+        #    the pristine bridge sample x_t. This trains GenHead on realistic
+        #    inference-time inputs with ~31% L2 error, not just sigma=0.009 noise.
+        use_exposed = expose_ratio > 0.0 and torch.rand(1).item() < expose_ratio
+        if use_exposed:
+            with torch.no_grad():
+                x_gen = self.bridge.sample(dp1)    # (B, S, D) — SDE reconstruction
+            t_gen = torch.ones(B, device=dp1.device)
+        else:
+            x_gen = x_t
+            t_gen = t
+
         select = tag_labels.reshape(-1) == REPLACE
         if select.any():
-            xp = x_t.reshape(-1, x_t.shape[-1])[select]
+            xp = x_gen.reshape(-1, x_gen.shape[-1])[select]
             lb = gen_labels.reshape(-1)[select]
-            t_sel = t.repeat_interleave(x_t.shape[1], dim=0)[select]
-            c_sel = dp1.reshape(-1, x_t.shape[-1])[select]
+            t_sel = t_gen.repeat_interleave(x_gen.shape[1], dim=0)[select]
+            c_sel = dp1.reshape(-1, x_gen.shape[-1])[select]
             gl = self.generator(xp, t_sel, cond=c_sel)         # (n, V)
             loss_gen = F.cross_entropy(gl.float(), lb.clamp(0, gl.shape[-1] - 1))
         else:
@@ -403,6 +471,147 @@ class DSBHybrid(nn.Module):
         t_full = torch.ones(x.shape[0], device=x.device)
         tag_logits = self.tagger(x, t_full, cond=dp1)   # (B, S, NUM_TAGS)
         return x, tag_logits.softmax(-1)
+
+    @torch.no_grad()
+    def compute_diagnostics(
+        self,
+        dp1: torch.Tensor,
+        dp2: torch.Tensor,
+        tag_labels: torch.Tensor,
+        gen_labels: torch.Tensor,
+        recon_steps: Optional[int] = None,
+        num_eval: int = 16,
+        embed_weight: Optional[torch.Tensor] = None,
+        lm_head_fn: Optional[Callable] = None,
+    ) -> dict:
+        """
+        Comprehensive interpretability diagnostics:
+          1. Continuous SDE: baseline, signal %, reconstruction error vs identity, and cosine similarity.
+          2. Discrete Tagger: KEEP accuracy, REPLACE precision/recall/F1.
+          3. Discrete Generator: Top-1 and Top-5 token exact match accuracy on REPLACE/INSERT slots.
+          4. Pretrained LM-Head Decode: Top-1 and Top-5 via backbone's pretrained MLM head on Layer 12 states.
+          5. Nearest-Neighbor Cosine Decode: Top-1 and Top-5 via cosine similarity to embed_weight.
+        """
+        n = min(num_eval, dp1.shape[0])
+        dp1_e = dp1[:n]
+        dp2_e = dp2[:n]
+        tag_e = tag_labels[:n]
+        gen_e = gen_labels[:n]
+
+        # 1) Continuous SDE Diagnostics
+        bl = self.bridge.baseline_loss(dp1_e).item()
+        _, _, sig = self.bridge.signal_captured(dp1, dp2, num_eval=n)
+
+        sampled_x = self.bridge.sample(dp1_e, steps=recon_steps)
+        recon = torch.norm(sampled_x - dp2_e, dim=-1).mean().item()
+        ident = torch.norm(dp2_e - dp1_e, dim=-1).mean().item()
+
+        cos_sim = F.cosine_similarity(
+            sampled_x.reshape(-1, sampled_x.shape[-1]),
+            dp2_e.reshape(-1, dp2_e.shape[-1]),
+            dim=-1,
+        ).mean().item()
+
+        # 2) Discrete Head Diagnostics on the Sampled State (evaluated at t=1, cond=dp1)
+        t_ones = torch.ones(n, device=dp1.device)
+        tag_logits = self.tagger(sampled_x, t_ones, cond=dp1_e)  # (n, S, NUM_TAGS)
+        pred_tags = tag_logits.argmax(-1)                        # (n, S)
+
+        valid_tag_mask = (tag_e != -100)
+        keep_mask = valid_tag_mask & (tag_e == KEEP)
+        replace_mask = valid_tag_mask & (tag_e == REPLACE)
+
+        keep_acc = (pred_tags[keep_mask] == KEEP).float().mean().item() if keep_mask.any() else 0.0
+
+        tp_rep = ((pred_tags == REPLACE) & replace_mask).sum().item()
+        pred_rep = (pred_tags[valid_tag_mask] == REPLACE).sum().item()
+        true_rep = replace_mask.sum().item()
+
+        prec_rep = (tp_rep / pred_rep) if pred_rep > 0 else 0.0
+        rec_rep = (tp_rep / true_rep) if true_rep > 0 else 0.0
+        f1_rep = (2 * prec_rep * rec_rep / (prec_rep + rec_rep)) if (prec_rep + rec_rep) > 0 else 0.0
+
+        # 3) Generator Top-1 and Top-5 Token Match on Corrupted Slots
+        gen_select = (gen_e != self.gen_ignore_index)
+        top1_acc, top5_acc = 0.0, 0.0
+        nn_top1_acc, nn_top5_acc = 0.0, 0.0
+        lm_top1_acc, lm_top5_acc = 0.0, 0.0
+        if gen_select.any():
+            xp = sampled_x.reshape(-1, sampled_x.shape[-1])[gen_select.reshape(-1)]
+            lb = gen_e.reshape(-1)[gen_select.reshape(-1)]
+            t_sel = t_ones.repeat_interleave(sampled_x.shape[1], dim=0)[gen_select.reshape(-1)]
+            c_sel = dp1_e.reshape(-1, sampled_x.shape[-1])[gen_select.reshape(-1)]
+
+            gl = self.generator(xp, t_sel, cond=c_sel)  # (N_gen, V)
+
+            top1_acc = (gl.argmax(-1) == lb).float().mean().item()
+            k = min(5, gl.shape[-1])
+            top5_acc = gl.topk(k, dim=-1).indices.eq(lb.unsqueeze(1)).any(1).float().mean().item()
+
+            # 4) Pretrained LM-Head Decode Baseline:
+            #    Evaluates the backbone's pretrained MLM head directly on sampled_x (Layer 12).
+            #    Reveals the true semantic recovery quality of the SDE without depending on GenHead learning.
+            fn = lm_head_fn if lm_head_fn is not None else self.lm_head
+            if fn is not None:
+                with torch.no_grad():
+                    lm_logits = fn(xp)
+                    lm_top1_acc = (lm_logits.argmax(-1) == lb).float().mean().item()
+                    lm_k = min(5, lm_logits.shape[-1])
+                    lm_top5_acc = lm_logits.topk(lm_k, dim=-1).indices.eq(lb.unsqueeze(1)).any(1).float().mean().item()
+
+            # 5) Nearest-Neighbor Cosine Decode (Layer 0 baseline):
+            if embed_weight is not None:
+                normed_xp = F.normalize(xp, dim=-1)                    # (N, D)
+                normed_w = F.normalize(embed_weight, dim=-1)           # (V, D)
+                cos_sims = normed_xp @ normed_w.T                     # (N, V)
+                nn_top1_acc = (cos_sims.argmax(-1) == lb).float().mean().item()
+                nn_k = min(5, cos_sims.shape[-1])
+                nn_top5_acc = cos_sims.topk(nn_k, dim=-1).indices.eq(lb.unsqueeze(1)).any(1).float().mean().item()
+
+        return {
+            "baseline": bl,
+            "signal": sig * 100.0,
+            "recon_err": recon,
+            "identity": ident,
+            "cos_sim": cos_sim,
+            "keep_acc": keep_acc * 100.0,
+            "rep_f1": f1_rep * 100.0,
+            "rep_prec": prec_rep * 100.0,
+            "rep_rec": rec_rep * 100.0,
+            "top1_acc": top1_acc * 100.0,
+            "top5_acc": top5_acc * 100.0,
+            "lm_top1_acc": lm_top1_acc * 100.0,
+            "lm_top5_acc": lm_top5_acc * 100.0,
+            "nn_top1_acc": nn_top1_acc * 100.0,
+            "nn_top5_acc": nn_top5_acc * 100.0,
+        }
+
+    @torch.no_grad()
+    def decode_nearest(
+        self,
+        x: torch.Tensor,
+        embed_weight: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Decode continuous embeddings x to token IDs by finding the nearest neighbor
+        in the pretrained embedding table (via cosine similarity).
+
+        Args:
+            x: (B, S, D) or (N, D) continuous embeddings.
+            embed_weight: Optional (V, D) token embedding matrix (defaults to self.embed_weight).
+
+        Returns:
+            token_ids: (B, S) or (N,) nearest token IDs.
+        """
+        w = embed_weight if embed_weight is not None else self.embed_weight
+        if w is None:
+            raise ValueError("decode_nearest requires embed_weight (either passed or in DSBHybrid)")
+        orig_shape = x.shape[:-1]
+        x_flat = x.reshape(-1, x.shape[-1])
+        normed_x = F.normalize(x_flat, dim=-1)
+        normed_w = F.normalize(w.to(x.device), dim=-1)
+        sims = normed_x @ normed_w.T  # (N, V)
+        return sims.argmax(-1).reshape(orig_shape)
 
     # ── Phase 2: full edit-aware joint loss & two-phase sampling ──────────────
 
@@ -554,13 +763,29 @@ class DSBHybrid(nn.Module):
         return results
 
     @staticmethod
-    def _sample_topk(logits: torch.Tensor, temperature: float, top_k: int, top_p: float) -> List[int]:
-        """Vectorized top-k / top-p sampling over vocab logits -> token ids (per position)."""
+    def _sample_topk(logits: torch.Tensor, temperature: float, top_k: int, top_p: float,
+                     generated_ids: Optional[List[int]] = None, repetition_penalty: float = 1.0) -> List[int]:
+        """Vectorized top-k / top-p sampling over vocab logits -> token ids (per position).
+
+        Args:
+            repetition_penalty: >1.0 divides logits of already-generated tokens (HuggingFace convention).
+                                 1.0 = disabled (no penalty). Recommended: 1.2–1.5 for early training.
+        """
         if logits.numel() == 0:
             return []
         # Move the small (N_replace, 250002) projection to CPU for instantaneous AVX quickselect
         # rather than triggering a slow 80s Level-Zero JIT compilation stall on Intel XPU.
         logits = logits.detach().to("cpu", dtype=torch.float32) / max(temperature, 1e-8)
+
+        # Repetition penalty: down-weight tokens that have already been generated in this canvas.
+        if repetition_penalty != 1.0 and generated_ids:
+            prev = torch.tensor(list(set(generated_ids)), dtype=torch.long)
+            prev = prev[prev < logits.shape[-1]]
+            if len(prev) > 0:
+                # Positive logits are divided; negative logits are multiplied (HF convention).
+                scores = logits[:, prev]
+                logits[:, prev] = torch.where(scores > 0, scores / repetition_penalty, scores * repetition_penalty)
+
         k = min(top_k, logits.shape[-1])
         topk_vals, topk_idx = logits.topk(k, dim=-1)   # (N, K) on CPU
         topk_probs = F.softmax(topk_vals, dim=-1)      # (N, K)
@@ -614,6 +839,9 @@ class DSBHybrid(nn.Module):
         max_len: Optional[int] = None,
         dp1: Optional[torch.Tensor] = None,  # (B, S, D) source embedding (head cond)
         seed_ids: Optional[List[List[int]]] = None,  # per-row starting canvas token ids
+        repetition_penalty: float = 1.3,      # >1.0 suppresses repeated tokens; 1.0 = off
+        decode_mode: str = "genhead",         # "genhead" (use learned GenHead) or "nearest" (cosine similarity to embed_weight)
+        embed_weight: Optional[torch.Tensor] = None,  # token embedding matrix (defaults to self.embed_weight)
     ) -> List[str]:
         """
         True variable-length iterative refinement decode (DLLM-style, ported).
@@ -691,8 +919,32 @@ class DSBHybrid(nn.Module):
                     cur_sel = cur[b][pos_tensor]
                     t_sel = t_row.expand(len(gen_positions))
                     c_sel = c_row[0][pos_tensor] if c_row is not None else None
-                    gen_logits = self.generator(cur_sel, t_sel, cond=c_sel)  # (N_gen, V)
-                    sampled_tokens = self._sample_topk(gen_logits, temperature, top_k, top_p)
+
+                    if decode_mode == "lm_head":
+                        if hasattr(embedder, "decode_logits"):
+                            gen_logits = embedder.decode_logits(cur_sel)
+                        elif self.lm_head is not None:
+                            gen_logits = self.lm_head(cur_sel)
+                        else:
+                            gen_logits = self.generator(cur_sel, t_sel, cond=c_sel)
+                    elif decode_mode == "nearest":
+                        w = embed_weight if embed_weight is not None else self.embed_weight
+                        if w is None:
+                            raise ValueError("decode_mode='nearest' requires embed_weight (either passed or in DSBHybrid)")
+                        normed_cur = F.normalize(cur_sel, dim=-1)
+                        normed_w = F.normalize(w.to(cur_sel.device), dim=-1)
+                        gen_logits = (normed_cur @ normed_w.T) * 20.0
+                    else:
+                        gen_logits = self.generator(cur_sel, t_sel, cond=c_sel)  # (N_gen, V)
+
+                    # Pass currently committed non-special canvas tokens as context
+                    # for repetition penalty so the generator avoids repeating them.
+                    committed = [t for t in canvases[b] if t not in special]
+                    sampled_tokens = self._sample_topk(
+                        gen_logits, temperature, top_k, top_p,
+                        generated_ids=committed,
+                        repetition_penalty=repetition_penalty,
+                    )
                     for pos, tok_id in zip(gen_positions, sampled_tokens):
                         if pos < len(gen_toks):
                             gen_toks[pos] = tok_id

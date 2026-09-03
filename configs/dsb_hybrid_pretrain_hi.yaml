@@ -1,0 +1,74 @@
+# DLLM — DSBHybrid pretraining for Monolingual Hindi.
+#
+# Continuous Diffusion Schrödinger Bridge (DSB) + discrete edit heads (tagger/generator)
+# pretrained unconditionally on monolingual Hindi text (Devanagari).
+#
+# Backbone: XLM-RoBERTa (multilingual tokenizer natively supporting Devanagari).
+# Objective: Joint continuous SDE score-matching + discrete token edit supervision.
+
+model:
+  embedder: "xlm-roberta-base"
+  max_length: 128
+  # FROZEN: Jointly training the encoder collapses embeddings to constant representations
+  # to trivially minimize score-matching variance. The bridge operates on the fixed
+  # multilingual semantic manifold.
+  train_embedder: false
+  gradient_checkpointing: false
+  # Score network architecture: Transformer with self-attention across sequence positions
+  score_net: "transformer"
+  num_heads: 8
+  # Condition tagger and generator heads on t and source embedding DP1
+  condition_heads: true
+  edit_conditioned_score: false
+  hidden_dim: 512
+  num_layers: 3
+  time_embed_dim: 128
+  tie_weights: true
+  # Per-class weights for the tagger [KEEP, DELETE, REPLACE, INSERT, EXPAND]
+  tag_weights: [0.7, 0.8, 1.0, 2.0, 4.0]
+
+dsb:
+  beta_schedule: "linear"
+  num_steps: 1000
+  beta_min: 0.0001
+  beta_max: 0.02
+  # Condition score net on DP1 to predict the true conditional drift
+  condition_on_dp1: true
+  # Two-ended bridge schedule: variance vanishes at both t=0 (DP1) and t=1 (DP2)
+  sigma2_schedule: "bridge"
+
+data:
+  # Monolingual Hindi corpus (e.g., generated via scripts/prepare_pretrain_data.py --lang hi)
+  train_path: "./data/pretrain_hi.txt"
+  val_path: null
+  shuffle_buffer: 100000
+  val_max_batches: 100
+  corruption_scheme: "full"     # Full Levenshtein edit grammar (INSERT/DELETE/EXPAND/REPLACE)
+  corruption:
+    noise_vocab_size: 30000     # Sample replacement noise from the frequent vocabulary pool
+    mask_prob: 0.25             # 25% of tokens are corrupted
+    mask_ratio: 0.25            # 25% become <mask_id>, 75% become real word/noise replacements
+    replace_ratio: 0.15         # 15% random word substitution
+    delete_ratio: 0.08          # 8% words deleted (teaches model to INSERT / EXPAND)
+    insert_ratio: 0.08          # 8% spurious tokens inserted (teaches model to DELETE)
+    expand_ratio: 0.05          # 5% tokens compressed into [EXPAND]
+    expand_prob: 0.10
+    insert_prob: 0.15
+    t_skew: 2.0
+    shortage_prob: 0.35
+
+training:
+  batch_size: 4
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 50000
+  log_every: 10
+  eval_every: 500
+  diag_every: 100
+  recon_steps: 50              # Number of reverse-SDE steps for diagnostic reconstruction error
+  grad_clip: 1.0
+  mixed_precision: true
+  # Auxiliary discrete loss weights
+  lambda_tag: 1.0
+  lambda_gen: 1.0

@@ -42,6 +42,11 @@ from dllm.dsb_hybrid import (
     EditConditionedScoreNet,
     corrupt_fixed,
     corrupt_full,
+    KEEP,
+    DELETE,
+    REPLACE,
+    INSERT,
+    EXPAND,
 )
 from dllm.utils import set_seed, resolve_device
 
@@ -52,18 +57,20 @@ class TextEmbedder(nn.Module):
     def __init__(self, backbone="roberta-base", max_length=128, trainable=True,
                  gradient_checkpointing=False):
         super().__init__()
-        from transformers import AutoTokenizer, AutoModel
+        from transformers import AutoTokenizer, AutoModelForMaskedLM
         self.tokenizer = AutoTokenizer.from_pretrained(backbone)
-        self.encoder = AutoModel.from_pretrained(backbone)
+        self.model = AutoModelForMaskedLM.from_pretrained(backbone)
+        self.encoder = getattr(self.model, self.model.base_model_prefix, self.model)
+        self.lm_head = getattr(self.model, "lm_head", getattr(self.model, "cls", None))
         self.max_length = max_length
-        self.dim = self.encoder.config.hidden_size
+        self.dim = self.model.config.hidden_size
         self.trainable = trainable
         if gradient_checkpointing:
-            self.encoder.gradient_checkpointing_enable()
+            self.model.gradient_checkpointing_enable()
         if not trainable:
-            for p in self.encoder.parameters():
+            for p in self.model.parameters():
                 p.requires_grad = False
-            self.encoder.eval()
+            self.model.eval()
 
     def tokenize(self, texts):
         return self.tokenizer(texts, padding=True, truncation=True,
@@ -77,6 +84,15 @@ class TextEmbedder(nn.Module):
         # (see DSBHybrid.loss: it returns score-matching only when x_t.dim()!=3).
         out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         return out.last_hidden_state  # (B, S, D)
+
+    def decode_logits(self, hidden_states):
+        """Decode Layer 12 contextual hidden states (..., D) -> (..., V) vocabulary logits."""
+        if self.lm_head is not None:
+            return self.lm_head(hidden_states)
+        elif hasattr(self.model, "get_output_embeddings"):
+            return self.model.get_output_embeddings()(hidden_states)
+        else:
+            raise AttributeError("Model has no lm_head")
 
 
 # ── Streaming reader (never loads the whole corpus) ─────────────────────────
@@ -106,9 +122,43 @@ def batch_stream(path, batch_size, buffer_size=100000):
 
 
 def batch_clean_ids_from_texts(embedder, texts, pad_id):
-    """Tokenize texts -> (clean_ids, attention_mask) on CPU."""
-    enc = embedder.tokenize(texts)
-    return enc["input_ids"], enc["attention_mask"]
+    """Tokenize texts (monolingual or TSV pairs) -> (clean_ids, attention_mask, prompt_lens) on CPU."""
+    tokenizer = embedder.tokenizer
+    has_pairs = any("\t" in t for t in texts)
+
+    if not has_pairs:
+        enc = embedder.tokenize(texts)
+        return enc["input_ids"], enc["attention_mask"], [0] * len(texts)
+
+    clean_ids_list = []
+    prompt_lens = []
+    max_len = 0
+    for text in texts:
+        if "\t" in text:
+            src, tgt = text.split("\t", 1)
+        else:
+            src, tgt = text, ""
+
+        src_ids = tokenizer.encode(src.strip(), add_special_tokens=True)
+        if tgt.strip():
+            tgt_ids = tokenizer.encode(tgt.strip(), add_special_tokens=False) + [tokenizer.eos_token_id]
+        else:
+            tgt_ids = []
+
+        full = (src_ids + tgt_ids)[:embedder.max_length]
+        clean_ids_list.append(full)
+        prompt_lens.append(min(len(src_ids), len(full)))
+        max_len = max(max_len, len(full))
+
+    batch_size = len(texts)
+    clean_ids = torch.full((batch_size, max_len), pad_id, dtype=torch.long)
+    attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
+    for b in range(batch_size):
+        row = clean_ids_list[b]
+        clean_ids[b, :len(row)] = torch.tensor(row, dtype=torch.long)
+        attention_mask[b, :len(row)] = 1
+
+    return clean_ids, attention_mask, prompt_lens
 
 
 # ── Build (noisy, tag, gen) for a batch of clean ids ────────────────────────
@@ -116,19 +166,16 @@ def batch_clean_ids_from_texts(embedder, texts, pad_id):
 def build_batch_labels(
     clean_ids,           # (B, S) CPU or device
     attention_mask,      # (B, S)
+    prompt_lens,         # list of int: length of prompt region per row (0 if monolingual)
     corruptor,           # ForwardCorruptor (for "full") or None
     scheme,              # "fixed" | "full"
     mask_prob, mask_ratio, noise_pool, mask_id, pad_id, S, device,
 ):
     """
     Produce noisy_ids, tag_labels, gen_labels (all on `device`, (B, S)).
+    If prompt_lens is provided, prompt tokens are protected with tag=KEEP and gen=-100.
     For "full", each row is corrupted with the Levenshtein grammar then aligned
     to the S canvas. pad positions are masked so tag/gen losses ignore them.
-
-    Uses the batch's ACTUAL tokenized length (``attention_mask.shape[1]``) for
-    the padded tensors, so they line up with ``clean_ids``/``attention_mask``
-    (which the tokenizer pads only to the longest sequence in the batch, not to
-    the config max_length). ``S`` is only an upper cap on growth.
     """
     B = clean_ids.shape[0]
     S_eff = attention_mask.shape[1]          # batch-wide tokenized length
@@ -136,20 +183,39 @@ def build_batch_labels(
     noisy_list, tag_list, gen_list = [], [], []
     for b in range(B):
         nz = clean_ids[b].tolist()
-        # Drop pad so corruption/alignment operates on real tokens only.
         real_len = int(attention_mask[b].sum().item())
         real = nz[:real_len]
-        if scheme == "fixed":
-            n, tg, ge = corrupt_fixed(real, mask_prob=mask_prob, mask_ratio=mask_ratio,
-                                      noise_pool=noise_pool, mask_id=mask_id)
+        p_len = prompt_lens[b] if prompt_lens is not None else 0
+
+        if p_len > 0 and p_len < real_len:
+            # Paired sample: Prompt section is protected
+            prompt_part = real[:p_len]
+            resp_part = real[p_len:]
+
+            if scheme == "fixed":
+                n_resp, tg_resp, ge_resp = corrupt_fixed(resp_part, mask_prob=mask_prob, mask_ratio=mask_ratio,
+                                                         noise_pool=noise_pool, mask_id=mask_id)
+            else:
+                n_resp, tg_resp, ge_resp = corrupt_full(resp_part, corruptor)
+
+            n = prompt_part + n_resp
+            tg = [KEEP] * len(prompt_part) + tg_resp
+            ge = [-100] * len(prompt_part) + ge_resp
         else:
-            n, tg, ge = corrupt_full(real, corruptor)
+            # Monolingual sample: Entire sequence is corrupted
+            if scheme == "fixed":
+                n, tg, ge = corrupt_fixed(real, mask_prob=mask_prob, mask_ratio=mask_ratio,
+                                          noise_pool=noise_pool, mask_id=mask_id)
+            else:
+                n, tg, ge = corrupt_full(real, corruptor)
+
         nn_ = torch.tensor(n[:cap] + [pad_id] * max(0, cap - len(n)))
         tg_ = torch.tensor(tg[:cap] + [-100] * max(0, cap - len(tg)))
         ge_ = torch.tensor(ge[:cap] + [-100] * max(0, cap - len(ge)))
         noisy_list.append(nn_)
         tag_list.append(tg_)
         gen_list.append(ge_)
+
     noisy_ids = torch.stack(noisy_list).to(device)
     tag_labels = torch.stack(tag_list).to(device)
     gen_labels = torch.stack(gen_list).to(device)
@@ -230,7 +296,10 @@ def train(args, config):
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=cond_on_dp1,
         sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
+        prediction_target=config["dsb"].get("prediction_target", "u"),
     ).to(device)
+    embed_weight = embedder.encoder.get_input_embeddings().weight
+    lm_head = getattr(embedder, "lm_head", None)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
         lambda_tag=config["training"].get("lambda_tag", 1.0),
@@ -238,18 +307,25 @@ def train(args, config):
         tag_weights=mcfg.get("tag_weights"),
         condition_heads=mcfg.get("condition_heads", False),
         time_embed_dim=mcfg.get("time_embed_dim", 128),
+        embed_weight=embed_weight,
+        tie_weights=mcfg.get("tie_weights", True),
+        lm_head=lm_head,
     ).to(device)
 
     params = []
     for p in score_net.parameters():
-        params.append(p)
-    for p in hybrid.tagger.parameters():
-        params.append(p)
-    for p in hybrid.generator.parameters():
-        params.append(p)
-    if embedder.trainable:
-        for p in embedder.encoder.parameters():
+        if p.requires_grad:
             params.append(p)
+    for p in hybrid.tagger.parameters():
+        if p.requires_grad:
+            params.append(p)
+    for p in hybrid.generator.parameters():
+        if p.requires_grad:
+            params.append(p)
+    if embedder.trainable:
+        for p in embedder.parameters():
+            if p.requires_grad:
+                params.append(p)
     n_params = sum(p.numel() for p in params)
     print(f"Trainable parameters: {n_params:,}")
 
@@ -284,27 +360,46 @@ def train(args, config):
     # run (e.g. Kaggle's 12h cap) can continue where it left off.
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
-        hybrid.load_state_dict(ckpt["hybrid"])
-        embedder.load_state_dict(ckpt["embedder"])
+        sd = ckpt["hybrid"]
+        if mcfg.get("tie_weights", True) and "generator.net.3.weight" in sd:
+            ckpt_tie = ckpt.get("config", {}).get("model", {}).get("tie_weights", False)
+            if not ckpt_tie:
+                print("  [resume] Checkpoint had untied generator weights; preserving tied pretrained word embeddings.")
+                sd = {k: v for k, v in sd.items() if k != "generator.net.3.weight"}
+        hybrid.load_state_dict(sd, strict=False)
+        if "embedder" in ckpt:
+            try:
+                embedder.load_state_dict(ckpt["embedder"])
+            except Exception:
+                pass
         if "optimizer_state_dict" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        if "scheduler_state_dict" in ckpt:
-            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        global_step = int(ckpt.get("global_step", 0))
-        best_val = float(ckpt.get("best_val", float("inf")))
-        print(f"Resumed from {args.resume} (step {global_step}, best_val {best_val:.4f})")
+            try:
+                optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+                if "scheduler_state_dict" in ckpt:
+                    scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+                global_step = int(ckpt.get("global_step", 0))
+                best_val = float(ckpt.get("best_val", float("inf")))
+                print(f"Resumed optimizer & scheduler from {args.resume} (step {global_step}, best_val {best_val:.4f})")
+            except Exception as e:
+                print(f"  [resume] Optimizer state skipped ({e}) — starting fresh optimizer & LR warmup for fine-tuning.")
+                global_step = 0
+                best_val = float("inf")
+        else:
+            global_step = 0
+            best_val = float("inf")
+            print(f"Resumed model weights from {args.resume} (starting fresh fine-tuning at step 0)")
 
     while global_step < total:
         for batch in batch_stream(config["data"]["train_path"], batch_size,
                                   buffer_size=config["data"].get("shuffle_buffer", 100000)):
             if global_step >= total:
                 break
-            clean_ids_cpu, attn_cpu = batch_clean_ids_from_texts(embedder, batch,
-                                                                 tokenizer.pad_token_id)
+            clean_ids_cpu, attn_cpu, prompt_lens = batch_clean_ids_from_texts(embedder, batch,
+                                                                               tokenizer.pad_token_id)
             clean_ids = clean_ids_cpu.to(device)
             attn = attn_cpu.to(device)
             noisy_ids, tag_labels, gen_labels = build_batch_labels(
-                clean_ids, attn, corruptor, scheme, mask_prob, mask_ratio,
+                clean_ids, attn, prompt_lens, corruptor, scheme, mask_prob, mask_ratio,
                 noise_pool, mask_id, pad_id, S, device,
             )
 
@@ -317,12 +412,19 @@ def train(args, config):
                 # Condition the score on ground-truth tags when using the
                 # edit-conditioned score net (phase 2).
                 cond = tag_labels.clamp(0, 5) if mcfg.get("edit_conditioned_score", False) else None
+                # Scheduled sampling: anneal expose_ratio from 0 → max_expose
+                # over training so GenHead gradually learns to decode from the
+                # SDE's own imperfect reconstructions (closing the train-test gap).
+                max_expose = tcfg.get("max_expose_ratio", 0.5)
+                expose_warmup = tcfg.get("expose_warmup_steps", total // 4)
+                expose_ratio = min(max_expose, max_expose * global_step / max(1, expose_warmup))
                 if scheme == "full":
                     loss, loss_dict = hybrid.loss_edit(dp1, dp2, tag_labels, gen_labels,
                                                        condition_tags=cond)
                 else:
                     loss, loss_dict = hybrid.loss(dp1, dp2, clean_ids, noisy_ids, attn,
-                                                  t=torch.rand(dp1.shape[0], device=device))
+                                                  t=torch.rand(dp1.shape[0], device=device),
+                                                  expose_ratio=expose_ratio)
             loss.backward()
             nn.utils.clip_grad_norm_(params, tcfg["grad_clip"])
             optimizer.step()
@@ -335,21 +437,23 @@ def train(args, config):
                       f"gen {loss_dict['gen']:.3f}]  lr {scheduler.get_last_lr()[0]:.2e}")
 
                 # Expensive interpretability diagnostics (baseline / signal /
-                # full reverse-SDE reconstruction) — run every `diag_every`
-                # steps. Uses the hybrid's bridge (same SDE machinery).
+                # full reverse-SDE reconstruction + discrete head accuracy) — run every `diag_every`
+                # steps. Uses the hybrid's compute_diagnostics.
                 if global_step % diag_every == 0:
                     with torch.no_grad():
-                        bl = hybrid.bridge.baseline_loss(dp1)
-                        sig = hybrid.bridge.signal_captured(dp1, dp2)
-                        recon = hybrid.bridge.reconstruction_error(dp1, dp2, steps=recon_steps)
-                        # Identity baseline: ||DP2 - DP1||. recon_err at or above
-                        # this means the bridge is not transporting at all (it
-                        # would do no worse than returning the input unchanged).
-                        ident = (dp2 - dp1).norm(dim=-1).mean()
-                    print(f"  [diag] baseline {bl.item():.4f}, "
-                          f"signal {sig[2]*100:.1f}%, "
-                          f"recon_err {recon.item():.4f} "
-                          f"(identity {ident.item():.4f})")
+                        diag = hybrid.compute_diagnostics(
+                            dp1, dp2, tag_labels, gen_labels,
+                            recon_steps=recon_steps,
+                            embed_weight=embed_weight,
+                            lm_head_fn=embedder.decode_logits if hasattr(embedder, "decode_logits") else None,
+                        )
+                    print(f"  [diag] SDE: signal {diag['signal']:.1f}%, cos_sim {diag['cos_sim']:.3f}, "
+                          f"recon_err {diag['recon_err']:.4f} (identity {diag['identity']:.4f})")
+                    print(f"  [diag] Heads: Top-1 Acc {diag['top1_acc']:.1f}%, Top-5 Acc {diag['top5_acc']:.1f}%, "
+                          f"Replace-F1 {diag['rep_f1']:.1f}% (prec {diag['rep_prec']:.1f}%, rec {diag['rep_rec']:.1f}%), "
+                          f"Keep-Acc {diag['keep_acc']:.1f}%")
+                    print(f"  [diag] LM-Head Decode: Top-1 {diag['lm_top1_acc']:.1f}%, Top-5 {diag['lm_top5_acc']:.1f}% | "
+                          f"NN Decode: Top-1 {diag['nn_top1_acc']:.1f}%, Top-5 {diag['nn_top5_acc']:.1f}%")
 
             if global_step % tcfg["eval_every"] == 0:
                 val_loss = loss.item()
