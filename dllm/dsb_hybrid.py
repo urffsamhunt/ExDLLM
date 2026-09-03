@@ -517,6 +517,15 @@ class DSBHybrid(nn.Module):
             recon = torch.norm(sampled_x - dp2_e, dim=-1).mean().item()
             ident = torch.norm(dp2_e - dp1_e, dim=-1).mean().item()
 
+        # Denoising performance on actual corrupted (REPLACE) slots:
+        rep_mask_sde = (tag_e == REPLACE) & (attn_e == 1) if attn_e is not None else (tag_e == REPLACE)
+        if rep_mask_sde.any():
+            rep_recon = torch.norm(sampled_x[rep_mask_sde] - dp2_e[rep_mask_sde], dim=-1).mean().item()
+            rep_ident = torch.norm(dp2_e[rep_mask_sde] - dp1_e[rep_mask_sde], dim=-1).mean().item()
+        else:
+            rep_recon = recon
+            rep_ident = ident
+
         cos_sim = F.cosine_similarity(
             sampled_x.reshape(-1, sampled_x.shape[-1]),
             dp2_e.reshape(-1, dp2_e.shape[-1]),
@@ -584,6 +593,8 @@ class DSBHybrid(nn.Module):
             "signal": sig * 100.0,
             "recon_err": recon,
             "identity": ident,
+            "rep_recon": rep_recon,
+            "rep_ident": rep_ident,
             "cos_sim": cos_sim,
             "keep_acc": keep_acc * 100.0,
             "rep_f1": f1_rep * 100.0,

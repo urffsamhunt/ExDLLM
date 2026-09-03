@@ -444,7 +444,8 @@ def train(args, config):
                             attention_mask=attn,
                         )
                     print(f"  [diag] SDE: signal {diag['signal']:.1f}%, cos_sim {diag['cos_sim']:.3f}, "
-                          f"recon_err {diag['recon_err']:.4f} (identity {diag['identity']:.4f})")
+                          f"recon_err {diag['recon_err']:.4f} (ident {diag['identity']:.4f}) | "
+                          f"rep_recon {diag.get('rep_recon', 0.0):.4f} (rep_ident {diag.get('rep_ident', 0.0):.4f})")
                     print(f"  [diag] Heads: Top-1 Acc {diag['top1_acc']:.1f}%, Top-5 Acc {diag['top5_acc']:.1f}%, "
                           f"Replace-F1 {diag['rep_f1']:.1f}% (prec {diag['rep_prec']:.1f}%, rec {diag['rep_rec']:.1f}%), "
                           f"Keep-Acc {diag['keep_acc']:.1f}%")
