@@ -36,6 +36,7 @@ dsb:
   condition_on_dp1: true
   # Two-ended bridge schedule: variance vanishes at both t=0 (DP1) and t=1 (DP2)
   sigma2_schedule: "bridge"
+  prediction_target: "x0"       # "x0" (direct clean DP2 target prediction) or "u" (score matching)
 
 data:
   # Monolingual Hindi corpus (e.g., generated via scripts/prepare_pretrain_data.py --lang hi)
@@ -43,7 +44,7 @@ data:
   val_path: null
   shuffle_buffer: 100000
   val_max_batches: 100
-  corruption_scheme: "full"     # Full Levenshtein edit grammar (INSERT/DELETE/EXPAND/REPLACE)
+  corruption_scheme: "fixed"    # "fixed" | "full" (fixed preserves 1:1 token alignment on continuous SDE canvas)
   corruption:
     noise_vocab_size: 30000     # Sample replacement noise from the frequent vocabulary pool
     mask_prob: 0.25             # 25% of tokens are corrupted
@@ -69,6 +70,6 @@ training:
   recon_steps: 50              # Number of reverse-SDE steps for diagnostic reconstruction error
   grad_clip: 1.0
   mixed_precision: true
-  # Auxiliary discrete loss weights
+  # Auxiliary discrete loss weights (lambda_gen scaled to 0.1 to match score matching scale)
   lambda_tag: 1.0
-  lambda_gen: 1.0
+  lambda_gen: 0.1

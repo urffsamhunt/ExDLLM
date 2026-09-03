@@ -138,7 +138,7 @@ def load_hybrid_model(checkpoint_path, device):
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=cond_on,
         sigma2_schedule=config["dsb"].get("sigma2_schedule", "bridge"),
-        prediction_target=config["dsb"].get("prediction_target", "u"),
+        prediction_target=config["dsb"].get("prediction_target", "x0"),
     ).to(device)
 
     if "hybrid" in ckpt:

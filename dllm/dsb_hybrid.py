@@ -396,8 +396,12 @@ class DSBHybrid(nn.Module):
         if t is None:
             t = torch.rand(B, device=dp1.device)
         x_t, u_target = self.bridge.forward_sample(dp1, dp2, t)
-        u_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
-        loss_sm = F.mse_loss(u_pred, u_target)
+        u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, attention_mask=attention_mask)
+        if attention_mask is not None and u_pred.dim() == 3:
+            mask = attention_mask.unsqueeze(-1).float()
+            loss_sm = ((u_pred - u_target) ** 2 * mask).sum() / (mask.sum() * u_pred.shape[-1]).clamp(min=1.0)
+        else:
+            loss_sm = F.mse_loss(u_pred, u_target)
 
         if x_t.dim() != 3:
             # Pooled (non-per-position) embeddings carry no per-token structure,
@@ -430,7 +434,7 @@ class DSBHybrid(nn.Module):
         use_exposed = expose_ratio > 0.0 and torch.rand(1).item() < expose_ratio
         if use_exposed:
             with torch.no_grad():
-                x_gen = self.bridge.sample(dp1)    # (B, S, D) — SDE reconstruction
+                x_gen = self.bridge.sample(dp1, attention_mask=attention_mask, return_clean=True)    # (B, S, D) — SDE reconstruction
             t_gen = torch.ones(B, device=dp1.device)
         else:
             x_gen = x_t
@@ -483,6 +487,7 @@ class DSBHybrid(nn.Module):
         num_eval: int = 16,
         embed_weight: Optional[torch.Tensor] = None,
         lm_head_fn: Optional[Callable] = None,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> dict:
         """
         Comprehensive interpretability diagnostics:
@@ -497,14 +502,20 @@ class DSBHybrid(nn.Module):
         dp2_e = dp2[:n]
         tag_e = tag_labels[:n]
         gen_e = gen_labels[:n]
+        attn_e = attention_mask[:n] if attention_mask is not None else None
 
         # 1) Continuous SDE Diagnostics
         bl = self.bridge.baseline_loss(dp1_e).item()
-        _, _, sig = self.bridge.signal_captured(dp1, dp2, num_eval=n)
+        _, _, sig = self.bridge.signal_captured(dp1_e, dp2_e, num_eval=n, attention_mask=attn_e)
 
-        sampled_x = self.bridge.sample(dp1_e, steps=recon_steps)
-        recon = torch.norm(sampled_x - dp2_e, dim=-1).mean().item()
-        ident = torch.norm(dp2_e - dp1_e, dim=-1).mean().item()
+        sampled_x = self.bridge.sample(dp1_e, steps=recon_steps, attention_mask=attn_e, return_clean=True)
+        if attn_e is not None and sampled_x.dim() == 3:
+            denom_m = attn_e.float().sum().clamp(min=1.0)
+            recon = ((torch.norm(sampled_x - dp2_e, dim=-1) * attn_e.float()).sum() / denom_m).item()
+            ident = ((torch.norm(dp2_e - dp1_e, dim=-1) * attn_e.float()).sum() / denom_m).item()
+        else:
+            recon = torch.norm(sampled_x - dp2_e, dim=-1).mean().item()
+            ident = torch.norm(dp2_e - dp1_e, dim=-1).mean().item()
 
         cos_sim = F.cosine_similarity(
             sampled_x.reshape(-1, sampled_x.shape[-1]),
@@ -622,6 +633,8 @@ class DSBHybrid(nn.Module):
         gen_labels: torch.Tensor,   # (B, S) int64, -100 = ignore
         t: Optional[torch.Tensor] = None,   # (B,) noise levels
         dp1: Optional[torch.Tensor] = None,  # (B, S, D) source embedding
+        x_gen: Optional[torch.Tensor] = None,
+        t_gen: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Tagger + generator cross-entropy on the SDE embedding x_t."""
         tag_logits = self.tagger(x_t, t, cond=dp1)         # (B, S, NUM_TAGS)
@@ -630,10 +643,12 @@ class DSBHybrid(nn.Module):
                                    weight=w, ignore_index=-100)
         select = gen_labels.reshape(-1) != self.gen_ignore_index
         if select.any():
-            xp = x_t.reshape(-1, x_t.shape[-1])[select]
+            x_eval = x_gen if x_gen is not None else x_t
+            t_eval = t_gen if t_gen is not None else t
+            xp = x_eval.reshape(-1, x_eval.shape[-1])[select]
             lb = gen_labels.reshape(-1)[select]
-            t_sel = t.repeat_interleave(x_t.shape[1], dim=0)[select]
-            c_sel = dp1.reshape(-1, x_t.shape[-1])[select]
+            t_sel = t_eval.repeat_interleave(x_eval.shape[1], dim=0)[select]
+            c_sel = dp1.reshape(-1, x_eval.shape[-1])[select] if dp1 is not None else None
             gl = self.generator(xp, t_sel, cond=c_sel)
             loss_gen = F.cross_entropy(gl.float(), lb.clamp(0, gl.shape[-1] - 1))
         else:
@@ -648,6 +663,8 @@ class DSBHybrid(nn.Module):
         gen_labels: torch.Tensor,   # (B, S) gen targets (-100 ignore)
         t: Optional[torch.Tensor] = None,
         condition_tags: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        expose_ratio: float = 0.0,
     ) -> Tuple[torch.Tensor, dict]:  # type: ignore[type-arg]
         """
         Phase-2 joint loss using the FULL edit-grammar labels and an optional
@@ -661,13 +678,27 @@ class DSBHybrid(nn.Module):
             t = torch.rand(B, device=dp1.device)
         x_t, u_target = self.bridge.forward_sample(dp1, dp2, t)
         if hasattr(self.bridge.score_net, "num_tags"):
-            u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, tag_ids=condition_tags)
+            u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, tag_ids=condition_tags, attention_mask=attention_mask)
         else:
-            u_pred = self.bridge.score_predict(x_t, t, dp1=dp1)
-        loss_sm = F.mse_loss(u_pred, u_target)
+            u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, attention_mask=attention_mask)
+        
+        if attention_mask is not None and u_pred.dim() == 3:
+            mask = attention_mask.unsqueeze(-1).float()
+            loss_sm = ((u_pred - u_target) ** 2 * mask).sum() / (mask.sum() * u_pred.shape[-1]).clamp(min=1.0)
+        else:
+            loss_sm = F.mse_loss(u_pred, u_target)
+
+        use_exposed = expose_ratio > 0.0 and torch.rand(1).item() < expose_ratio
+        if use_exposed:
+            with torch.no_grad():
+                x_gen = self.bridge.sample(dp1, attention_mask=attention_mask, return_clean=True)
+            t_gen = torch.ones(B, device=dp1.device)
+        else:
+            x_gen = x_t
+            t_gen = t
 
         loss_tag, loss_gen = self.build_edit_loss(x_t, tag_labels, gen_labels,
-                                                  t=t, dp1=dp1)
+                                                  t=t, dp1=dp1, x_gen=x_gen, t_gen=t_gen)
         total = loss_sm + self.lambda_tag * loss_tag + self.lambda_gen * loss_gen
         return total, {
             "total": total.item(),
@@ -1008,6 +1039,7 @@ def corrupt_full(clean_ids, corruptor):
     position ``i`` to approach the clean sequence; ``gen_targets[i]`` is the
     clean token to produce when the tag is REPLACE/INSERT.
     """
+    clean_list = list(clean_ids)
     noisy = list(clean_ids)
     # Apply length-changing corruptions first, then mask.
     noisy = corruptor._apply_replace(noisy)
@@ -1015,8 +1047,18 @@ def corrupt_full(clean_ids, corruptor):
     noisy = corruptor._apply_insert(noisy)
     noisy = corruptor._apply_expand(noisy)
     noisy = corruptor._apply_mask(noisy)
+
+    # String encoding for Levenshtein alignment
+    noisy_str, _ = corruptor._ids_to_string(noisy)
+    clean_str, _ = corruptor._ids_to_string(clean_list)
+    try:
+        import Levenshtein
+        edit_ops = Levenshtein.editops(noisy_str, clean_str)
+    except Exception:
+        edit_ops = []
+
     # Rich Levenshtein alignment noisy -> clean.
-    tag_token_ids = corruptor.compute_tag_labels(noisy, list(clean_ids))
+    tag_token_ids = corruptor.compute_tag_labels(noisy, clean_list)
     # Translate tokenizer tag IDs to our 0..4 indices.
     tid2idx = {
         getattr(corruptor.tokenizer, "keep_id", getattr(corruptor, "keep_id", 50265)): KEEP,
@@ -1026,17 +1068,26 @@ def corrupt_full(clean_ids, corruptor):
         getattr(corruptor.tokenizer, "expand_id", getattr(corruptor, "expand_id", 50269)): EXPAND,
     }
     tags = [tid2idx.get(tok, KEEP) for tok in tag_token_ids]
-    # Gen targets: for REPLACE/INSERT positions, record the clean token that
-    # should be written here. Use Levenshtein-derived best guess (the clean
-    # token that aligns to this noisy slot). We approximate by scanning clean_ids.
+
+    # Map noisy position -> clean token using exact Levenshtein alignment
+    noisy_to_clean = {}
+    for op, noisy_pos, clean_pos in edit_ops:
+        if clean_pos < len(clean_list):
+            noisy_to_clean[noisy_pos] = clean_list[clean_pos]
+
     gen = [-1] * len(noisy)
-    # Simple alignment: for each REPLACE position, try the same-index clean token.
+    last_clean_idx = 0
     for i, tag in enumerate(tags):
-        if tag in (REPLACE, INSERT):
-            # Map noisy index -> clean index via an edit-distance backpointer is
-            # complex; use the nearest clean token as the target (a reasonable
-            # proxy from the Levenshtein op stream).
-            gen[i] = clean_ids[min(i, len(clean_ids) - 1)]
+        if i in noisy_to_clean:
+            clean_tok = noisy_to_clean[i]
+            if clean_tok in clean_list:
+                last_clean_idx = clean_list.index(clean_tok)
+            if tag in (REPLACE, INSERT):
+                gen[i] = clean_tok
+        elif tag in (REPLACE, INSERT):
+            # Fallback for positions without direct editop (e.g. forced mask or expand)
+            fallback_idx = min(last_clean_idx, len(clean_list) - 1)
+            gen[i] = clean_list[fallback_idx]
     return noisy, tags, gen
 
 

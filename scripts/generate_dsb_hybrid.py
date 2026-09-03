@@ -141,8 +141,8 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
         num_steps=config["dsb"]["num_steps"],
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=bool(config["dsb"].get("condition_on_dp1", False)),
-        sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
-        prediction_target=config["dsb"].get("prediction_target", "u"),
+        sigma2_schedule=config["dsb"].get("sigma2_schedule", "bridge"),
+        prediction_target=config["dsb"].get("prediction_target", "x0"),
     ).to(device)
 
     # Auto-detect head architecture and dimensions from state_dict if available
@@ -189,8 +189,8 @@ def build_bridge(config, embedder, device):
         num_steps=config["dsb"]["num_steps"],
         beta_min=config["dsb"]["beta_min"], beta_max=config["dsb"]["beta_max"],
         condition_on_dp1=cond_on,
-        sigma2_schedule=config["dsb"].get("sigma2_schedule", "ou"),
-        prediction_target=config["dsb"].get("prediction_target", "u"),
+        sigma2_schedule=config["dsb"].get("sigma2_schedule", "bridge"),
+        prediction_target=config["dsb"].get("prediction_target", "x0"),
     ).to(device)
     return bridge
 

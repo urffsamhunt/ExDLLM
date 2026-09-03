@@ -312,22 +312,13 @@ def train(args, config):
         lm_head=lm_head,
     ).to(device)
 
-    params = []
-    for p in score_net.parameters():
-        if p.requires_grad:
-            params.append(p)
-    for p in hybrid.tagger.parameters():
-        if p.requires_grad:
-            params.append(p)
-    for p in hybrid.generator.parameters():
-        if p.requires_grad:
-            params.append(p)
+    score_params = [p for p in score_net.parameters() if p.requires_grad]
     if embedder.trainable:
-        for p in embedder.parameters():
-            if p.requires_grad:
-                params.append(p)
+        score_params += [p for p in embedder.parameters() if p.requires_grad]
+    head_params = [p for p in list(hybrid.tagger.parameters()) + list(hybrid.generator.parameters()) if p.requires_grad]
+    params = score_params + head_params
     n_params = sum(p.numel() for p in params)
-    print(f"Trainable parameters: {n_params:,}")
+    print(f"Trainable parameters: {n_params:,} (score: {sum(p.numel() for p in score_params):,}, heads: {sum(p.numel() for p in head_params):,})")
 
     tcfg = config["training"]
     # How often the expensive interpretability diagnostics (baseline/signal/
@@ -420,13 +411,17 @@ def train(args, config):
                 expose_ratio = min(max_expose, max_expose * global_step / max(1, expose_warmup))
                 if scheme == "full":
                     loss, loss_dict = hybrid.loss_edit(dp1, dp2, tag_labels, gen_labels,
-                                                       condition_tags=cond)
+                                                       condition_tags=cond,
+                                                       attention_mask=attn,
+                                                       expose_ratio=expose_ratio)
                 else:
                     loss, loss_dict = hybrid.loss(dp1, dp2, clean_ids, noisy_ids, attn,
                                                   t=torch.rand(dp1.shape[0], device=device),
                                                   expose_ratio=expose_ratio)
             loss.backward()
-            nn.utils.clip_grad_norm_(params, tcfg["grad_clip"])
+            nn.utils.clip_grad_norm_(score_params, tcfg["grad_clip"])
+            if head_params:
+                nn.utils.clip_grad_norm_(head_params, tcfg["grad_clip"])
             optimizer.step()
             scheduler.step()
             global_step += 1
@@ -446,6 +441,7 @@ def train(args, config):
                             recon_steps=recon_steps,
                             embed_weight=embed_weight,
                             lm_head_fn=embedder.decode_logits if hasattr(embedder, "decode_logits") else None,
+                            attention_mask=attn,
                         )
                     print(f"  [diag] SDE: signal {diag['signal']:.1f}%, cos_sim {diag['cos_sim']:.3f}, "
                           f"recon_err {diag['recon_err']:.4f} (identity {diag['identity']:.4f})")
