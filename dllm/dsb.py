@@ -152,11 +152,15 @@ class TransformerScoreNet(nn.Module):
         cond_dim: int = 0,
         num_heads: int = 8,
         dropout: float = 0.0,
+        gated_drift: bool = False,
+        num_tags: int = 5,
     ):
         super().__init__()
         self.dim = dim
         self.cond_dim = cond_dim
         self.time_embed_dim = time_embed_dim
+        self.gated_drift = gated_drift
+        self.num_tags = num_tags
         self.time_mlp = nn.Sequential(
             nn.Linear(1, time_embed_dim),
             nn.SiLU(),
@@ -175,10 +179,19 @@ class TransformerScoreNet(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
         self.out_proj = nn.Linear(hidden_dim, dim)
+        if self.gated_drift:
+            self.router = nn.Linear(hidden_dim, num_tags)
+        else:
+            self.router = None
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor,
-                cond: Optional[torch.Tensor] = None,
-                attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        cond: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        return_routing: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
         # x: (B, S, D) or (B, D); t: (B,); cond: same shape as x (e.g. DP1)
         squeeze = x.dim() == 2
         if squeeze:
@@ -195,8 +208,24 @@ class TransformerScoreNet(nn.Module):
         h = self.in_proj(torch.cat([h_in, t_emb], dim=-1))
         pad_mask = (attention_mask == 0) if (attention_mask is not None and not squeeze) else None
         h = self.encoder(h, src_key_padding_mask=pad_mask)
-        out = self.out_proj(h)
-        return out.squeeze(1) if squeeze else out
+        raw_out = self.out_proj(h)
+
+        routing_logits = None
+        out = raw_out
+        if self.gated_drift and self.router is not None:
+            routing_logits = self.router(h)
+            if cond is not None:
+                # Class 0 corresponds to KEEP / [DO_NOTHING]
+                p_keep = F.softmax(routing_logits, dim=-1)[..., 0:1]
+                gate = 1.0 - p_keep
+                c_target = cond if not squeeze else cond
+                out = gate * raw_out + (1.0 - gate) * c_target
+
+        out_ret = out.squeeze(1) if squeeze else out
+        if return_routing:
+            rout_ret = (routing_logits.squeeze(1) if squeeze else routing_logits) if routing_logits is not None else None
+            return out_ret, rout_ret
+        return out_ret
 
 
 # ── The SDE / DSB bridge ──────────────────────────────────────────────────────
@@ -294,14 +323,22 @@ class DiffSchrodingerBridge(nn.Module):
     def _beta_at(self, t: torch.Tensor) -> torch.Tensor:
         return self._interp(self.betas, t)
 
-    def score_predict(self, x: torch.Tensor, t: torch.Tensor,
-                      dp1: Optional[torch.Tensor] = None,
-                      attention_mask: Optional[torch.Tensor] = None,
-                      **kwargs) -> torch.Tensor:
+    def score_predict(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        dp1: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        return_routing: bool = False,
+        **kwargs,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Optional[torch.Tensor]]]:
         """Evaluate the score net, optionally conditioning on the source DP1."""
         cond = dp1 if self.condition_on_dp1 else None
         if isinstance(self.score_net, TransformerScoreNet):
-            return self.score_net(x, t, cond=cond, attention_mask=attention_mask, **kwargs)
+            return self.score_net(x, t, cond=cond, attention_mask=attention_mask,
+                                  return_routing=return_routing, **kwargs)
+        if return_routing:
+            return self.score_net(x, t, cond=cond, **kwargs), None
         return self.score_net(x, t, cond=cond, **kwargs)
 
     # ── Forward diffusion: sample x_t from the bridge ────────────────────────
@@ -390,15 +427,26 @@ class DiffSchrodingerBridge(nn.Module):
     # ── Interpretability diagnostics ──────────────────────────────────────────
 
     @torch.no_grad()
-    def baseline_loss(self, x_like: torch.Tensor) -> torch.Tensor:
+    def baseline_loss(
+        self,
+        dp1: torch.Tensor,
+        dp2: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
-        The MSE achieved by the zero predictor in the u-parametrization.
+        The reference baseline MSE against which score matching / denoising is measured.
 
-        u* = mu - x_t = -sigma_t * z, so the per-dim expected MSE for a zero
-        prediction is E_t[sigma2_t]. This is the reference point that makes
-        the raw loss interpretable: loss ~ baseline means the network is
-        predicting ~nothing; loss -> 0 means it matches the target.
+        In u-parametrization:
+            Expected MSE of the zero predictor is E_t[sigma2_t].
+        In x0-prediction:
+            Expected MSE of predicting the un-denoised input DP1 (identity baseline)
+            is MSE(DP1, DP2).
         """
+        if self.prediction_target == "x0" and dp2 is not None:
+            if attention_mask is not None and dp1.dim() == 3:
+                mask = attention_mask.unsqueeze(-1).float()
+                return (((dp1 - dp2) ** 2) * mask).sum() / (mask.sum() * dp1.shape[-1]).clamp(min=1.0)
+            return F.mse_loss(dp1, dp2)
         return self.sigma2.mean()
 
     @torch.no_grad()
@@ -412,12 +460,13 @@ class DiffSchrodingerBridge(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[float, float, float]:
         """
-        Compare the actual score-matching loss against the zero-score baseline.
+        Compare the actual score-matching loss against the reference baseline.
 
         Returns (loss, baseline, signal) where
             signal = (baseline - loss) / baseline
-        is the fraction of the score signal the network has captured. signal ~ 0
-        means it predicts nothing; signal -> 1 means it matches the true score.
+        is the fraction of the score/denoising signal captured relative to the baseline.
+        In u-mode, baseline is E_t[sigma2_t] (zero predictor).
+        In x0-mode, baseline is MSE(DP1, DP2) (identity predictor doing zero denoising).
         """
         if t is None:
             n = min(num_eval, dp1.shape[0])
@@ -431,7 +480,14 @@ class DiffSchrodingerBridge(nn.Module):
             dp2_e = dp2[:num_eval]
             attn_e = attention_mask[:num_eval] if attention_mask is not None else None
         loss = self.score_matching_loss(dp1_e, dp2_e, t=t, attention_mask=attn_e)
-        baseline = self._sigma2_at(t).mean()
+        if self.prediction_target == "x0":
+            if attn_e is not None and dp1_e.dim() == 3:
+                mask = attn_e.unsqueeze(-1).float()
+                baseline = (((dp1_e - dp2_e) ** 2) * mask).sum() / (mask.sum() * dp1_e.shape[-1]).clamp(min=1.0)
+            else:
+                baseline = F.mse_loss(dp1_e, dp2_e)
+        else:
+            baseline = self._sigma2_at(t).mean()
         signal = (baseline - loss) / baseline.clamp(min=1e-6)
         return loss.item(), baseline.item(), signal.item()
 
@@ -537,11 +593,21 @@ class DiffSchrodingerBridge(nn.Module):
             var_step_b = var_step.view(1, 1, 1) if is_3d else var_step.view(1, 1)
 
             t_vec = torch.full((B,), t_k.item(), device=dp1.device)
-            dp2_est = self._estimate_target(x, t_vec, dp1, attention_mask=attention_mask)
+            noise_scale = 1.0
+            if getattr(self.score_net, "gated_drift", False) and isinstance(self.score_net, TransformerScoreNet):
+                dp2_est, r_logits = self.score_predict(
+                    x, t_vec, dp1=dp1, attention_mask=attention_mask, return_routing=True
+                )
+                if r_logits is not None:
+                    p_keep = F.softmax(r_logits, dim=-1)[..., 0:1]
+                    gate = 1.0 - p_keep
+                    noise_scale = torch.sqrt(gate.clamp(min=0.05))
+            else:
+                dp2_est = self._estimate_target(x, t_vec, dp1, attention_mask=attention_mask)
 
             x_mean = (1.0 - a_step_b) * dp2_est + a_step_b * x
             noise = torch.randn_like(x)
-            x = x_mean + torch.sqrt(var_step_b + 1e-8) * noise
+            x = x_mean + torch.sqrt(var_step_b + 1e-8) * (noise * noise_scale)
 
             if return_trajectory:
                 traj.append(x.clone())

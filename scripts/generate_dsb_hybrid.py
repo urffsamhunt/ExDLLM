@@ -120,10 +120,16 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
             score_type = "mlp"
 
     if score_type == "transformer":
+        gated_drift = bool(
+            config.get("dsb", {}).get("gated_drift", False)
+            or mcfg.get("gated_drift", False)
+            or (state_dict is not None and any("bridge.score_net.router" in k for k in state_dict))
+        )
         score_net = TransformerScoreNet(
             dim=embedder.dim, hidden_dim=mcfg["hidden_dim"],
             num_layers=mcfg["num_layers"], time_embed_dim=mcfg["time_embed_dim"],
             cond_dim=cond_dim, num_heads=mcfg.get("num_heads", 8),
+            gated_drift=gated_drift,
         )
     elif score_type == "edit_conditioned" or mcfg.get("edit_conditioned_score", False):
         score_net = EditConditionedScoreNet(

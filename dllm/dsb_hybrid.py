@@ -133,6 +133,7 @@ def corrupt_fixed(
     noise_pool: Optional[List[int]] = None,
     mask_id: int = 0,
     rng: Optional[random.Random] = None,
+    stutter_prob: float = 0.0,
 ) -> Tuple[List[int], List[int], List[int]]:
     """
     Corrupt a clean token sequence in place (same length returned).
@@ -140,6 +141,13 @@ def corrupt_fixed(
     Each real position is either kept (tag = KEEP), replaced with ``<MASK>``,
     or replaced with a random noise token. Both replacement kinds get
     tag = REPLACE and a generator target = the original clean token.
+
+    ``stutter_prob`` controls the probability that ONE random non-special
+    position is overwritten with the token immediately preceding it, creating
+    an adjacent duplicate (e.g. "the the", "pack pack"). The position gets
+    tag = REPLACE and gen = the original clean token. This trains the model
+    to recognise and fix stuttering errors — a corruption type absent from
+    mask/random-word corruption.
 
     Returns (noisy_ids, tag_labels, gen_targets), all aligned to ``clean_ids``.
     """
@@ -158,6 +166,28 @@ def corrupt_fixed(
                 noisy[i] = rng.choice(noise_pool)
             tags[i] = REPLACE
             gen[i] = clean_ids[i]
+
+    # Stutter injection: replace ONE position with the previous token so that
+    # position i has token == token at position i-1 (adjacent duplicate).
+    # Use MASK token as the noisy value so GenHead sees the same masked embedding
+    # as in normal REPLACE training, rather than a clean-word embedding.
+    if stutter_prob > 0.0 and rng.random() < stutter_prob:
+        # Collect eligible positions: not special, not already corrupted,
+        # has a real non-special left neighbour.
+        candidates = [
+            i for i in range(1, len(noisy) - 1)
+            if clean_ids[i] != mask_id
+            and tags[i] == KEEP          # don't double-corrupt
+            and clean_ids[i - 1] != mask_id
+        ]
+        if candidates:
+            idx = rng.choice(candidates)
+            # Overwrite with MASK (keeps same distribution as normal REPLACE
+            # training so GenHead learns to decode from a masked embedding).
+            noisy[idx] = mask_id
+            tags[idx] = REPLACE
+            gen[idx] = clean_ids[idx]   # target = the word that SHOULD be here
+
     return noisy, tags, gen
 
 
@@ -302,6 +332,7 @@ class DSBHybrid(nn.Module):
         self,
         bridge: DiffSchrodingerBridge,
         vocab_size: int,
+        lambda_sm: float = 1.0,
         lambda_tag: float = 1.0,
         lambda_gen: float = 1.0,
         tag_weights: Optional[Tuple[float, ...]] = None,
@@ -324,6 +355,7 @@ class DSBHybrid(nn.Module):
                                  embed_weight=embed_weight,
                                  tie_weights=tie_weights,
                                  lm_head=lm_head)
+        self.lambda_sm = lambda_sm
         self.lambda_tag = lambda_tag
         self.lambda_gen = lambda_gen
         self.gen_ignore_index = gen_ignore_index
@@ -396,7 +428,16 @@ class DSBHybrid(nn.Module):
         if t is None:
             t = torch.rand(B, device=dp1.device)
         x_t, u_target = self.bridge.forward_sample(dp1, dp2, t)
-        u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, attention_mask=attention_mask)
+
+        has_router = getattr(self.bridge.score_net, "gated_drift", False)
+        if has_router:
+            u_pred, routing_logits = self.bridge.score_predict(
+                x_t, t, dp1=dp1, attention_mask=attention_mask, return_routing=True
+            )
+        else:
+            u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, attention_mask=attention_mask)
+            routing_logits = None
+
         if attention_mask is not None and u_pred.dim() == 3:
             mask = attention_mask.unsqueeze(-1).float()
             loss_sm = ((u_pred - u_target) ** 2 * mask).sum() / (mask.sum() * u_pred.shape[-1]).clamp(min=1.0)
@@ -413,6 +454,16 @@ class DSBHybrid(nn.Module):
                 "gen": 0.0,
                 "note": "pooled embeddings: discrete heads skipped",
             }
+
+        loss_router = torch.tensor(0.0, device=x_t.device)
+        if routing_logits is not None and tag_labels is not None:
+            if self._tag_weights is not None:
+                rw = self._tag_weights.to(routing_logits.device)
+            else:
+                rw = None
+            loss_router = F.cross_entropy(
+                routing_logits.permute(0, 2, 1).float(), tag_labels, weight=rw, ignore_index=-100
+            )
 
         # 3) Tagger head on the SDE intermediate embedding x_t (t + DP1
         #    conditioned so corruption stays identifiable at low t).
@@ -451,11 +502,12 @@ class DSBHybrid(nn.Module):
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
 
-        total = loss_sm + self.lambda_tag * loss_tag + self.lambda_gen * loss_gen
+        total = self.lambda_sm * loss_sm + self.lambda_tag * (loss_tag + loss_router) + self.lambda_gen * loss_gen
         return total, {
             "total": total.item(),
             "score_matching": loss_sm.item(),
             "tag": loss_tag.item(),
+            "router": loss_router.item(),
             "gen": loss_gen.item(),
         }
 
@@ -505,7 +557,7 @@ class DSBHybrid(nn.Module):
         attn_e = attention_mask[:n] if attention_mask is not None else None
 
         # 1) Continuous SDE Diagnostics
-        bl = self.bridge.baseline_loss(dp1_e).item()
+        bl = self.bridge.baseline_loss(dp1_e, dp2=dp2_e, attention_mask=attn_e).item()
         _, _, sig = self.bridge.signal_captured(dp1_e, dp2_e, num_eval=n, attention_mask=attn_e)
 
         sampled_x = self.bridge.sample(dp1_e, steps=recon_steps, attention_mask=attn_e, return_clean=True)
@@ -688,16 +740,33 @@ class DSBHybrid(nn.Module):
         if t is None:
             t = torch.rand(B, device=dp1.device)
         x_t, u_target = self.bridge.forward_sample(dp1, dp2, t)
-        if hasattr(self.bridge.score_net, "num_tags"):
+        has_router = getattr(self.bridge.score_net, "gated_drift", False)
+        if has_router:
+            u_pred, routing_logits = self.bridge.score_predict(
+                x_t, t, dp1=dp1, attention_mask=attention_mask, return_routing=True
+            )
+        elif hasattr(self.bridge.score_net, "num_tags"):
             u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, tag_ids=condition_tags, attention_mask=attention_mask)
+            routing_logits = None
         else:
             u_pred = self.bridge.score_predict(x_t, t, dp1=dp1, attention_mask=attention_mask)
+            routing_logits = None
         
         if attention_mask is not None and u_pred.dim() == 3:
             mask = attention_mask.unsqueeze(-1).float()
             loss_sm = ((u_pred - u_target) ** 2 * mask).sum() / (mask.sum() * u_pred.shape[-1]).clamp(min=1.0)
         else:
             loss_sm = F.mse_loss(u_pred, u_target)
+
+        loss_router = torch.tensor(0.0, device=x_t.device)
+        if routing_logits is not None and tag_labels is not None:
+            if self._tag_weights is not None:
+                rw = self._tag_weights.to(routing_logits.device)
+            else:
+                rw = None
+            loss_router = F.cross_entropy(
+                routing_logits.permute(0, 2, 1).float(), tag_labels, weight=rw, ignore_index=-100
+            )
 
         use_exposed = expose_ratio > 0.0 and torch.rand(1).item() < expose_ratio
         if use_exposed:
@@ -710,11 +779,12 @@ class DSBHybrid(nn.Module):
 
         loss_tag, loss_gen = self.build_edit_loss(x_t, tag_labels, gen_labels,
                                                   t=t, dp1=dp1, x_gen=x_gen, t_gen=t_gen)
-        total = loss_sm + self.lambda_tag * loss_tag + self.lambda_gen * loss_gen
+        total = self.lambda_sm * loss_sm + self.lambda_tag * (loss_tag + loss_router) + self.lambda_gen * loss_gen
         return total, {
             "total": total.item(),
             "score_matching": loss_sm.item(),
             "tag": loss_tag.item(),
+            "router": loss_router.item(),
             "gen": loss_gen.item(),
         }
 
@@ -925,9 +995,14 @@ class DSBHybrid(nn.Module):
             canvases: List[List[int]] = [list(row) for row in seed_ids]
         else:
             canvases = [[M] * S for _ in range(B)]
+
+        # Start from the SDE's denoised continuous representation x (at t=1),
+        # where the diffusion bridge has transported corrupted tokens toward their
+        # clean attractor basins. Subsequent refinement rounds (iteration 1+) will
+        # re-embed discrete canvas edits through the encoder.
         cur: List[torch.Tensor] = [x[b] for b in range(B)]  # (S, D) per row
 
-        for _ in range(max_iterations):
+        for iteration in range(max_iterations):
             changed = False
             next_canvases: List[List[int]] = []
             next_emb: List[torch.Tensor] = []
@@ -946,11 +1021,29 @@ class DSBHybrid(nn.Module):
                     if c.shape[1] >= L:
                         c_row = c[:, :L]
                     else:
-                        pad = torch.zeros(1, L - c.shape[1], c.shape[2],
-                                          device=c.device, dtype=c.dtype)
-                        c_row = torch.cat([c, pad], dim=1)
+                        c_pad = torch.zeros(1, L - c.shape[1], c.shape[2],
+                                            device=c.device, dtype=c.dtype)
+                        c_row = torch.cat([c, c_pad], dim=1)
                 tag_logits = self.tagger(emb, t_row, cond=c_row)[0]     # (L, T)
+                # If score net has an edit router, ensemble its routing prediction with the tagger
+                if getattr(self.bridge.score_net, "gated_drift", False) and getattr(self.bridge.score_net, "router", None) is not None:
+                    try:
+                        _, r_logits = self.bridge.score_net(emb, t_row, cond=c_row, return_routing=True)
+                        if r_logits is not None:
+                            tag_logits = 0.5 * tag_logits + 0.5 * r_logits[0]
+                    except Exception:
+                        pass
+                tag_probs = F.softmax(tag_logits, dim=-1)
                 tags = tag_logits.argmax(-1).tolist()
+
+                # Stutter / Repetition symmetry breaking:
+                # If adjacent non-special tokens are duplicate (e.g. "pack pack", "this this"),
+                # break symmetry by unconditionally forcing REPLACE on the duplicate slot
+                cur_tokens = canvases[b]
+                for idx in range(1, len(cur_tokens)):
+                    if cur_tokens[idx] == cur_tokens[idx - 1] and cur_tokens[idx] not in special:
+                        if idx < len(tags):
+                            tags[idx] = REPLACE
 
                 # Sparse generator evaluation: only evaluate the 250k-vocab GenHead
                 # and top-k sampling at positions that actually need token generation.
@@ -1004,7 +1097,11 @@ class DSBHybrid(nn.Module):
                 next_canvases.append(new_ids)
 
             canvases = next_canvases
-            if not changed:
+            # Require at least 2 iterations: the first pass re-embeds the canvas
+            # through the encoder and may unlock edits that weren't visible from
+            # the SDE embedding alone (e.g. adjacent-duplicate tokens whose
+            # contextual embeddings now signal REPLACE after a fresh encoder pass).
+            if not changed and iteration >= 1:
                 break
 
             # Re-embed: batch all rows padded to the longest current length.
@@ -1059,9 +1156,10 @@ def corrupt_full(clean_ids, corruptor):
     noisy = corruptor._apply_expand(noisy)
     noisy = corruptor._apply_mask(noisy)
 
-    # String encoding for Levenshtein alignment
-    noisy_str, _ = corruptor._ids_to_string(noisy)
-    clean_str, _ = corruptor._ids_to_string(clean_list)
+    # String encoding for Levenshtein alignment using a single shared char map
+    char_map: dict = {}
+    noisy_str, char_map = corruptor._ids_to_string(noisy, char_map=char_map)
+    clean_str, char_map = corruptor._ids_to_string(clean_list, char_map=char_map)
     try:
         import Levenshtein
         edit_ops = Levenshtein.editops(noisy_str, clean_str)
@@ -1082,17 +1180,18 @@ def corrupt_full(clean_ids, corruptor):
 
     # Map noisy position -> clean token using exact Levenshtein alignment
     noisy_to_clean = {}
+    noisy_to_clean_idx = {}
     for op, noisy_pos, clean_pos in edit_ops:
         if clean_pos < len(clean_list):
             noisy_to_clean[noisy_pos] = clean_list[clean_pos]
+            noisy_to_clean_idx[noisy_pos] = clean_pos
 
     gen = [-1] * len(noisy)
     last_clean_idx = 0
     for i, tag in enumerate(tags):
         if i in noisy_to_clean:
             clean_tok = noisy_to_clean[i]
-            if clean_tok in clean_list:
-                last_clean_idx = clean_list.index(clean_tok)
+            last_clean_idx = noisy_to_clean_idx.get(i, last_clean_idx)
             if tag in (REPLACE, INSERT):
                 gen[i] = clean_tok
         elif tag in (REPLACE, INSERT):

@@ -532,9 +532,10 @@ class ForwardCorruptor:
             List of token IDs (keep_id, delete_id, replace_id, insert_id,
             expand_id) — one per position in `noisy_ids`.
         """
-        # Map token IDs to unique characters for string alignment
-        noisy_str, noisy_map = self._ids_to_string(noisy_ids)
-        clean_str, clean_map = self._ids_to_string(clean_ids)
+        # Map token IDs to unique characters using a single shared mapping
+        char_map: dict = {}
+        noisy_str, char_map = self._ids_to_string(noisy_ids, char_map=char_map)
+        clean_str, char_map = self._ids_to_string(clean_ids, char_map=char_map)
 
         # Get Levenshtein edit operations
         edit_ops = Levenshtein.editops(noisy_str, clean_str)
@@ -580,14 +581,15 @@ class ForwardCorruptor:
 
         return labels
 
-    def _ids_to_string(self, ids: List[int]) -> Tuple[str, dict]:
+    def _ids_to_string(self, ids: List[int], char_map: Optional[dict] = None) -> Tuple[str, dict]:
         """
         Map token IDs to unique unicode characters for Levenshtein alignment.
 
         Uses characters from the Private Use Area (U+E000+) to avoid collisions
-        with actual text. Returns the string and a reverse mapping.
+        with actual text. Returns the string and the shared mapping.
         """
-        char_map = {}
+        if char_map is None:
+            char_map = {}
         chars = []
         for tid in ids:
             if tid not in char_map:

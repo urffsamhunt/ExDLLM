@@ -33,8 +33,8 @@ training:
   sub_iteration_weights: [2.0, 1.5, 1.0, 0.75, 0.5]
 
 data:
-  dataset_name: "tiny-shakespeare"
-  val_dataset_name: "tiny-shakespeare"
+  dataset_name: "tiny_shakespeare"
+  val_dataset_name: "tiny_shakespeare"
   mode: "prompt_response"       # "prompt_response" or "unconditional"
   max_prompt_length: 48
   max_response_length: 48       # upper bound for the prompt-predicted length M

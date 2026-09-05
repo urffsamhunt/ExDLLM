@@ -53,6 +53,7 @@ dsb:
   # so generation rebuilds the matching schedule.
   sigma2_schedule: "bridge"
   prediction_target: "x0"       # "x0" (direct clean DP2 target prediction) or "u" (score matching)
+  gated_drift: true             # Route tokens through edit dimension to gate continuous SDE drift
 
 data:
   train_path: "./data/pretrain_en.txt"
@@ -62,8 +63,9 @@ data:
   corruption_scheme: "fixed"    # "fixed" | "full" (fixed preserves 1:1 token alignment on continuous SDE canvas)
   corruption:
     noise_vocab_size: 30000      # Samples from real dictionary words (top 30k)
-    mask_prob: 0.25
+    mask_prob: 0.35              # Raised from 0.25 → 0.35 to reduce KEEP prior dominance
     mask_ratio: 0.25             # 25% <mask_id>, 75% real words / typos
+    stutter_prob: 0.30           # P(injecting one adjacent-duplicate stutter per sentence)
     replace_ratio: 0.15          # 15% random real word & typo replacement (teaches REPLACE on real words)
     delete_ratio: 0.08           # 8% words deleted (teaches INSERT / EXPAND)
     insert_ratio: 0.08           # 8% extraneous words inserted (teaches DELETE)
@@ -85,7 +87,8 @@ training:
   recon_steps: 50         # reverse-SDE steps for recon_err (50 steps: fast and numerically stable)
   grad_clip: 1.0
   mixed_precision: true
-  # Joint-loss weighting for the tagger / generator heads. lambda_gen is scaled to 0.1
-  # so generator cross-entropy (~10.0 across 250k vocab) balances with score-matching MSE (~0.2).
+  # Joint-loss weighting: lambda_sm scales per-dimension MSE (~0.005) to balance
+  # with tagger (~0.05) and generator (~0.3).
+  lambda_sm: 20.0
   lambda_tag: 1.0
   lambda_gen: 0.1

@@ -135,7 +135,7 @@ class DLLMDataset(Dataset):
 
         if text_file is not None and os.path.isfile(text_file):
             self._text_lines = self._load_text_file(text_file)
-        elif dataset_name == "tiny_shakespeare":
+        elif dataset_name in ("tiny_shakespeare", "tiny-shakespeare"):
             self._text_lines = self._load_tiny_shakespeare(cache_dir)
         elif os.path.isfile(dataset_name):
             self._text_lines = self._load_text_file(dataset_name)

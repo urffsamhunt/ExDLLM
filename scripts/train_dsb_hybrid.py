@@ -170,6 +170,7 @@ def build_batch_labels(
     corruptor,           # ForwardCorruptor (for "full") or None
     scheme,              # "fixed" | "full"
     mask_prob, mask_ratio, noise_pool, mask_id, pad_id, S, device,
+    stutter_prob: float = 0.0,
 ):
     """
     Produce noisy_ids, tag_labels, gen_labels (all on `device`, (B, S)).
@@ -194,7 +195,8 @@ def build_batch_labels(
 
             if scheme == "fixed":
                 n_resp, tg_resp, ge_resp = corrupt_fixed(resp_part, mask_prob=mask_prob, mask_ratio=mask_ratio,
-                                                         noise_pool=noise_pool, mask_id=mask_id)
+                                                         noise_pool=noise_pool, mask_id=mask_id,
+                                                         stutter_prob=stutter_prob)
             else:
                 n_resp, tg_resp, ge_resp = corrupt_full(resp_part, corruptor)
 
@@ -205,7 +207,8 @@ def build_batch_labels(
             # Monolingual sample: Entire sequence is corrupted
             if scheme == "fixed":
                 n, tg, ge = corrupt_fixed(real, mask_prob=mask_prob, mask_ratio=mask_ratio,
-                                          noise_pool=noise_pool, mask_id=mask_id)
+                                          noise_pool=noise_pool, mask_id=mask_id,
+                                          stutter_prob=stutter_prob)
             else:
                 n, tg, ge = corrupt_full(real, corruptor)
 
@@ -224,6 +227,65 @@ def build_batch_labels(
     tag_labels[pad_mask] = -100
     gen_labels[pad_mask] = -100
     return noisy_ids, tag_labels, gen_labels
+
+
+@torch.no_grad()
+def evaluate(
+    hybrid, embedder, tokenizer, corruptor, scheme,
+    val_batches, mask_prob, mask_ratio, noise_pool, mask_id, pad_id, S,
+    device, amp_dtype, mcfg,
+):
+    hybrid.eval()
+    embedder.eval()
+    val_loss_sum = 0.0
+    sm_sum = 0.0
+    tag_sum = 0.0
+    gen_sum = 0.0
+    count = 0
+
+    for batch in val_batches:
+        clean_ids_cpu, attn_cpu, prompt_lens = batch_clean_ids_from_texts(
+            embedder, batch, tokenizer.pad_token_id
+        )
+        clean_ids = clean_ids_cpu.to(device)
+        attn = attn_cpu.to(device)
+        noisy_ids, tag_labels, gen_labels = build_batch_labels(
+            clean_ids, attn, prompt_lens, corruptor, scheme, mask_prob, mask_ratio,
+            noise_pool, mask_id, pad_id, S, device,
+        )
+        with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
+            dp1 = embedder.embed_ids(noisy_ids, attn)
+            dp2 = embedder.embed_ids(clean_ids, attn).detach()
+            cond = tag_labels.clamp(0, 5) if mcfg.get("edit_conditioned_score", False) else None
+            if scheme == "full":
+                loss, loss_dict = hybrid.loss_edit(dp1, dp2, tag_labels, gen_labels,
+                                                   condition_tags=cond,
+                                                   attention_mask=attn,
+                                                   expose_ratio=0.0)
+            else:
+                loss, loss_dict = hybrid.loss(dp1, dp2, clean_ids, noisy_ids, attn,
+                                              t=torch.rand(dp1.shape[0], device=device),
+                                              expose_ratio=0.0)
+        val_loss_sum += loss.item()
+        sm_sum += loss_dict.get("score_matching", 0.0)
+        tag_sum += loss_dict.get("tag", 0.0)
+        gen_sum += loss_dict.get("gen", 0.0)
+        rout_sum = rout_sum + loss_dict.get("router", 0.0) if "rout_sum" in locals() else loss_dict.get("router", 0.0)
+        count += 1
+
+    hybrid.train()
+    if embedder.trainable:
+        embedder.train()
+
+    if count == 0:
+        return None
+    return {
+        "total": val_loss_sum / count,
+        "score_matching": sm_sum / count,
+        "tag": tag_sum / count,
+        "router": rout_sum / count if "rout_sum" in locals() else 0.0,
+        "gen": gen_sum / count,
+    }
 
 
 def train(args, config):
@@ -267,6 +329,7 @@ def train(args, config):
     batch_size = config["training"]["batch_size"]
     mask_prob = mcf.get("mask_prob", 0.15)
     mask_ratio = mcf.get("mask_ratio", 0.8)
+    stutter_prob = mcf.get("stutter_prob", 0.0)
     noise_pool = list(range(100, min(mcf.get("noise_vocab_size", 30000) + 100,
                                    tokenizer.vocab_size)))
 
@@ -274,10 +337,12 @@ def train(args, config):
     cond_dim = dim if cond_on_dp1 else 0
     score_type = mcfg.get("score_net", "mlp")
     if score_type == "transformer":
+        gated_drift = bool(config.get("dsb", {}).get("gated_drift", False) or mcfg.get("gated_drift", False))
         score_net = TransformerScoreNet(
             dim=dim, hidden_dim=mcfg["hidden_dim"], num_layers=mcfg["num_layers"],
             time_embed_dim=mcfg["time_embed_dim"], cond_dim=cond_dim,
             num_heads=mcfg.get("num_heads", 8),
+            gated_drift=gated_drift,
         )
     elif mcfg.get("edit_conditioned_score", False):
         score_net = EditConditionedScoreNet(
@@ -302,6 +367,7 @@ def train(args, config):
     lm_head = getattr(embedder, "lm_head", None)
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
+        lambda_sm=config["training"].get("lambda_sm", 20.0),
         lambda_tag=config["training"].get("lambda_tag", 1.0),
         lambda_gen=config["training"].get("lambda_gen", 1.0),
         tag_weights=mcfg.get("tag_weights"),
@@ -380,6 +446,31 @@ def train(args, config):
             best_val = float("inf")
             print(f"Resumed model weights from {args.resume} (starting fresh fine-tuning at step 0)")
 
+    # ── Prepare Validation Batches ──────────────────────────────────────
+    val_path = config["data"].get("val_path")
+    val_batches = []
+    val_max_batches = int(config["data"].get("val_max_batches", 50))
+    if val_path and os.path.exists(val_path):
+        for b in batch_stream(val_path, batch_size):
+            val_batches.append(b)
+            if len(val_batches) >= val_max_batches:
+                break
+        print(f"Loaded {len(val_batches)} validation batches from {val_path}")
+    else:
+        train_file = config["data"]["train_path"]
+        if os.path.exists(train_file):
+            held_lines = []
+            with open(train_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        held_lines.append(line)
+                        if len(held_lines) >= batch_size * val_max_batches:
+                            break
+            if held_lines:
+                val_batches = [held_lines[i:i + batch_size] for i in range(0, len(held_lines), batch_size)]
+                print(f"Held out {len(val_batches)} fixed validation batches from {train_file}")
+
     while global_step < total:
         for batch in batch_stream(config["data"]["train_path"], batch_size,
                                   buffer_size=config["data"].get("shuffle_buffer", 100000)):
@@ -391,7 +482,7 @@ def train(args, config):
             attn = attn_cpu.to(device)
             noisy_ids, tag_labels, gen_labels = build_batch_labels(
                 clean_ids, attn, prompt_lens, corruptor, scheme, mask_prob, mask_ratio,
-                noise_pool, mask_id, pad_id, S, device,
+                noise_pool, mask_id, pad_id, S, device, stutter_prob=stutter_prob,
             )
 
             optimizer.zero_grad()
@@ -427,8 +518,9 @@ def train(args, config):
             global_step += 1
 
             if global_step % tcfg["log_every"] == 0:
+                rout_str = f" rout {loss_dict['router']:.3f}" if loss_dict.get("router", 0.0) > 0 else ""
                 print(f"step {global_step}/{total}  total {loss.item():.4f}  "
-                      f"[sm {loss_dict['score_matching']:.3f} tag {loss_dict['tag']:.3f} "
+                      f"[sm {loss_dict['score_matching']:.3f}{rout_str} tag {loss_dict['tag']:.3f} "
                       f"gen {loss_dict['gen']:.3f}]  lr {scheduler.get_last_lr()[0]:.2e}")
 
                 # Expensive interpretability diagnostics (baseline / signal /
@@ -453,7 +545,21 @@ def train(args, config):
                           f"NN Decode: Top-1 {diag['nn_top1_acc']:.1f}%, Top-5 {diag['nn_top5_acc']:.1f}%")
 
             if global_step % tcfg["eval_every"] == 0:
-                val_loss = loss.item()
+                val_metrics = None
+                if val_batches:
+                    val_metrics = evaluate(
+                        hybrid, embedder, tokenizer, corruptor, scheme,
+                        val_batches, mask_prob, mask_ratio, noise_pool, mask_id, pad_id, S,
+                        device, amp_dtype, mcfg,
+                    )
+                if val_metrics is not None:
+                    val_loss = val_metrics["total"]
+                    print(f"  [eval] step {global_step} val_loss {val_loss:.4f} "
+                          f"[sm {val_metrics['score_matching']:.3f} tag {val_metrics['tag']:.3f} "
+                          f"gen {val_metrics['gen']:.3f}] (best {best_val:.4f})")
+                else:
+                    val_loss = loss.item()
+
                 if val_loss < best_val:
                     best_val = val_loss
                     torch.save({
@@ -462,8 +568,10 @@ def train(args, config):
                         "config": config,
                         "dim": dim,
                         "embedder_name": mcfg["embedder"],
+                        "best_val": best_val,
+                        "global_step": global_step,
                     }, os.path.join(args.save_dir, "best.pt"))
-                    print(f"  [eval] saved best (total {val_loss:.4f})")
+                    print(f"  [eval] saved best (val_loss {val_loss:.4f})")
 
                 # Overwriteable resume checkpoint (for session-limited runs
                 # like Kaggle's 12h cap): enables --resume continuation.
