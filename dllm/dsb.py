@@ -177,7 +177,7 @@ class TransformerScoreNet(nn.Module):
             batch_first=True,
             norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+        self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers, enable_nested_tensor=False)
         self.out_proj = nn.Linear(hidden_dim, dim)
         if self.gated_drift:
             self.router = nn.Linear(hidden_dim, num_tags)
@@ -207,7 +207,15 @@ class TransformerScoreNet(nn.Module):
         t_emb = t_emb.unsqueeze(1).expand(-1, h_in.shape[1], -1)
         h = self.in_proj(torch.cat([h_in, t_emb], dim=-1))
         pad_mask = (attention_mask == 0) if (attention_mask is not None and not squeeze) else None
-        h = self.encoder(h, src_key_padding_mask=pad_mask)
+        was_training = self.encoder.training
+        if not was_training:
+            self.encoder.train(True)
+            try:
+                h = self.encoder(h, src_key_padding_mask=pad_mask)
+            finally:
+                self.encoder.train(was_training)
+        else:
+            h = self.encoder(h, src_key_padding_mask=pad_mask)
         raw_out = self.out_proj(h)
 
         routing_logits = None

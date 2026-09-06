@@ -41,6 +41,7 @@ from dllm.dsb_hybrid import (
     DSBHybrid,
     EditConditionedScoreNet,
     corrupt_fixed,
+    corrupt_multiroute,
     corrupt_full,
     KEEP,
     DELETE,
@@ -168,20 +169,36 @@ def build_batch_labels(
     attention_mask,      # (B, S)
     prompt_lens,         # list of int: length of prompt region per row (0 if monolingual)
     corruptor,           # ForwardCorruptor (for "full") or None
-    scheme,              # "fixed" | "full"
+    scheme,              # "fixed" | "multiroute" | "full"
     mask_prob, mask_ratio, noise_pool, mask_id, pad_id, S, device,
     stutter_prob: float = 0.0,
+    tokenizer = None,
+    replace_ratio: float = 0.15,
+    delete_ratio: float = 0.08,
+    insert_ratio: float = 0.08,
+    expand_ratio: float = 0.05,
+    burst_mask_prob: float = 0.20,
+    burst_mask_max_len: int = 8,
+    burst_insert_prob: float = 0.15,
+    burst_insert_max_len: int = 6,
+    burst_expand_prob: float = 0.10,
+    burst_expand_max_len: int = 4,
+    burst_stutter_prob: float = 0.25,
+    burst_stutter_max_len: int = 20,
 ):
     """
-    Produce noisy_ids, tag_labels, gen_labels (all on `device`, (B, S)).
+    Produce noisy_ids, clean_aligned_ids, tag_labels, gen_labels (all on `device`, (B, S)).
     If prompt_lens is provided, prompt tokens are protected with tag=KEEP and gen=-100.
-    For "full", each row is corrupted with the Levenshtein grammar then aligned
-    to the S canvas. pad positions are masked so tag/gen losses ignore them.
+    For "multiroute" / "fixed", corrupt_multiroute produces balanced edits across KEEP,
+    REPLACE, DELETE, INSERT, EXPAND with 1:1 token alignment on the continuous SDE canvas
+    and supports multi-token burst masks, burst inserts, burst expands, and 20-token stutters.
+    For "full", each row is corrupted with the Levenshtein grammar then aligned to canvas.
+    pad positions are masked so tag/gen losses ignore them.
     """
     B = clean_ids.shape[0]
     S_eff = attention_mask.shape[1]          # batch-wide tokenized length
     cap = min(S, S_eff)                      # don't grow past the canvas/embed width
-    noisy_list, tag_list, gen_list = [], [], []
+    noisy_list, clean_aligned_list, tag_list, gen_list = [], [], [], []
     for b in range(B):
         nz = clean_ids[b].tolist()
         real_len = int(attention_mask[b].sum().item())
@@ -193,40 +210,93 @@ def build_batch_labels(
             prompt_part = real[:p_len]
             resp_part = real[p_len:]
 
-            if scheme == "fixed":
+            if scheme == "full":
+                n_resp, tg_resp, ge_resp = corrupt_full(resp_part, corruptor)
+                c_resp = resp_part
+            elif scheme == "legacy_fixed":
                 n_resp, tg_resp, ge_resp = corrupt_fixed(resp_part, mask_prob=mask_prob, mask_ratio=mask_ratio,
                                                          noise_pool=noise_pool, mask_id=mask_id,
                                                          stutter_prob=stutter_prob)
+                c_resp = resp_part
             else:
-                n_resp, tg_resp, ge_resp = corrupt_full(resp_part, corruptor)
+                n_resp, c_resp, tg_resp, ge_resp = corrupt_multiroute(
+                    resp_part,
+                    tokenizer=tokenizer,
+                    mask_prob=mask_prob,
+                    mask_ratio=mask_ratio,
+                    replace_ratio=replace_ratio,
+                    delete_ratio=delete_ratio,
+                    insert_ratio=insert_ratio,
+                    expand_ratio=expand_ratio,
+                    stutter_prob=stutter_prob,
+                    burst_mask_prob=burst_mask_prob,
+                    burst_mask_max_len=burst_mask_max_len,
+                    burst_insert_prob=burst_insert_prob,
+                    burst_insert_max_len=burst_insert_max_len,
+                    burst_expand_prob=burst_expand_prob,
+                    burst_expand_max_len=burst_expand_max_len,
+                    burst_stutter_prob=burst_stutter_prob,
+                    burst_stutter_max_len=burst_stutter_max_len,
+                    noise_pool=noise_pool,
+                    mask_id=mask_id,
+                )
 
             n = prompt_part + n_resp
+            c = prompt_part + c_resp
             tg = [KEEP] * len(prompt_part) + tg_resp
             ge = [-100] * len(prompt_part) + ge_resp
         else:
             # Monolingual sample: Entire sequence is corrupted
-            if scheme == "fixed":
+            if scheme == "full":
+                n, tg, ge = corrupt_full(real, corruptor)
+                c = real
+            elif scheme == "legacy_fixed":
                 n, tg, ge = corrupt_fixed(real, mask_prob=mask_prob, mask_ratio=mask_ratio,
                                           noise_pool=noise_pool, mask_id=mask_id,
                                           stutter_prob=stutter_prob)
+                c = real
             else:
-                n, tg, ge = corrupt_full(real, corruptor)
+                n, c, tg, ge = corrupt_multiroute(
+                    real,
+                    tokenizer=tokenizer,
+                    mask_prob=mask_prob,
+                    mask_ratio=mask_ratio,
+                    replace_ratio=replace_ratio,
+                    delete_ratio=delete_ratio,
+                    insert_ratio=insert_ratio,
+                    expand_ratio=expand_ratio,
+                    stutter_prob=stutter_prob,
+                    burst_mask_prob=burst_mask_prob,
+                    burst_mask_max_len=burst_mask_max_len,
+                    burst_insert_prob=burst_insert_prob,
+                    burst_insert_max_len=burst_insert_max_len,
+                    burst_expand_prob=burst_expand_prob,
+                    burst_expand_max_len=burst_expand_max_len,
+                    burst_stutter_prob=burst_stutter_prob,
+                    burst_stutter_max_len=burst_stutter_max_len,
+                    noise_pool=noise_pool,
+                    mask_id=mask_id,
+                )
 
         nn_ = torch.tensor(n[:cap] + [pad_id] * max(0, cap - len(n)))
+        cc_ = torch.tensor(c[:cap] + [pad_id] * max(0, cap - len(c)))
         tg_ = torch.tensor(tg[:cap] + [-100] * max(0, cap - len(tg)))
         ge_ = torch.tensor(ge[:cap] + [-100] * max(0, cap - len(ge)))
         noisy_list.append(nn_)
+        clean_aligned_list.append(cc_)
         tag_list.append(tg_)
         gen_list.append(ge_)
 
     noisy_ids = torch.stack(noisy_list).to(device)
+    clean_aligned_ids = torch.stack(clean_aligned_list).to(device)
     tag_labels = torch.stack(tag_list).to(device)
     gen_labels = torch.stack(gen_list).to(device)
     # Overwrite pad slots (beyond real_len) with ignore labels.
     pad_mask = (attention_mask == 0).to(device)[:, :cap]
+    clean_aligned_ids[pad_mask] = pad_id
     tag_labels[pad_mask] = -100
     gen_labels[pad_mask] = -100
-    return noisy_ids, tag_labels, gen_labels
+    return noisy_ids, clean_aligned_ids, tag_labels, gen_labels
 
 
 @torch.no_grad()
@@ -234,6 +304,20 @@ def evaluate(
     hybrid, embedder, tokenizer, corruptor, scheme,
     val_batches, mask_prob, mask_ratio, noise_pool, mask_id, pad_id, S,
     device, amp_dtype, mcfg,
+    stutter_prob: float = 0.0,
+    replace_ratio: float = 0.15,
+    delete_ratio: float = 0.08,
+    insert_ratio: float = 0.08,
+    expand_ratio: float = 0.05,
+    recon_steps: int = 50,
+    burst_mask_prob: float = 0.20,
+    burst_mask_max_len: int = 8,
+    burst_insert_prob: float = 0.15,
+    burst_insert_max_len: int = 6,
+    burst_expand_prob: float = 0.10,
+    burst_expand_max_len: int = 4,
+    burst_stutter_prob: float = 0.25,
+    burst_stutter_max_len: int = 20,
 ):
     hybrid.eval()
     embedder.eval()
@@ -241,6 +325,7 @@ def evaluate(
     sm_sum = 0.0
     tag_sum = 0.0
     gen_sum = 0.0
+    rout_sum = 0.0
     count = 0
 
     for batch in val_batches:
@@ -249,13 +334,27 @@ def evaluate(
         )
         clean_ids = clean_ids_cpu.to(device)
         attn = attn_cpu.to(device)
-        noisy_ids, tag_labels, gen_labels = build_batch_labels(
+        noisy_ids, clean_aligned_ids, tag_labels, gen_labels = build_batch_labels(
             clean_ids, attn, prompt_lens, corruptor, scheme, mask_prob, mask_ratio,
             noise_pool, mask_id, pad_id, S, device,
+            stutter_prob=stutter_prob,
+            tokenizer=tokenizer,
+            replace_ratio=replace_ratio,
+            delete_ratio=delete_ratio,
+            insert_ratio=insert_ratio,
+            expand_ratio=expand_ratio,
+            burst_mask_prob=burst_mask_prob,
+            burst_mask_max_len=burst_mask_max_len,
+            burst_insert_prob=burst_insert_prob,
+            burst_insert_max_len=burst_insert_max_len,
+            burst_expand_prob=burst_expand_prob,
+            burst_expand_max_len=burst_expand_max_len,
+            burst_stutter_prob=burst_stutter_prob,
+            burst_stutter_max_len=burst_stutter_max_len,
         )
         with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
             dp1 = embedder.embed_ids(noisy_ids, attn)
-            dp2 = embedder.embed_ids(clean_ids, attn).detach()
+            dp2 = embedder.embed_ids(clean_aligned_ids, attn).detach()
             cond = tag_labels.clamp(0, 5) if mcfg.get("edit_conditioned_score", False) else None
             if scheme == "full":
                 loss, loss_dict = hybrid.loss_edit(dp1, dp2, tag_labels, gen_labels,
@@ -263,14 +362,19 @@ def evaluate(
                                                    attention_mask=attn,
                                                    expose_ratio=0.0)
             else:
-                loss, loss_dict = hybrid.loss(dp1, dp2, clean_ids, noisy_ids, attn,
-                                              t=torch.rand(dp1.shape[0], device=device),
-                                              expose_ratio=0.0)
+                loss, loss_dict = hybrid.loss(
+                    dp1, dp2, clean_aligned_ids, noisy_ids, attn,
+                    t=torch.rand(dp1.shape[0], device=device),
+                    expose_ratio=0.0,
+                    tag_labels=tag_labels,
+                    gen_labels=gen_labels,
+                    recon_steps=recon_steps,
+                )
         val_loss_sum += loss.item()
         sm_sum += loss_dict.get("score_matching", 0.0)
         tag_sum += loss_dict.get("tag", 0.0)
         gen_sum += loss_dict.get("gen", 0.0)
-        rout_sum = rout_sum + loss_dict.get("router", 0.0) if "rout_sum" in locals() else loss_dict.get("router", 0.0)
+        rout_sum += loss_dict.get("router", 0.0)
         count += 1
 
     hybrid.train()
@@ -283,7 +387,7 @@ def evaluate(
         "total": val_loss_sum / count,
         "score_matching": sm_sum / count,
         "tag": tag_sum / count,
-        "router": rout_sum / count if "rout_sum" in locals() else 0.0,
+        "router": rout_sum / count,
         "gen": gen_sum / count,
     }
 
@@ -291,6 +395,8 @@ def evaluate(
 def train(args, config):
     device = torch.device(resolve_device() if args.device is None else args.device)
     print(f"Device: {device}")
+    if hasattr(torch.backends, "mha") and hasattr(torch.backends.mha, "set_fastpath_enabled"):
+        torch.backends.mha.set_fastpath_enabled(False)
 
     embedder = TextEmbedder(
         backbone=config["model"]["embedder"],
@@ -330,6 +436,18 @@ def train(args, config):
     mask_prob = mcf.get("mask_prob", 0.15)
     mask_ratio = mcf.get("mask_ratio", 0.8)
     stutter_prob = mcf.get("stutter_prob", 0.0)
+    replace_ratio = mcf.get("replace_ratio", 0.15)
+    delete_ratio = mcf.get("delete_ratio", 0.08)
+    insert_ratio = mcf.get("insert_ratio", 0.08)
+    expand_ratio = mcf.get("expand_ratio", 0.05)
+    burst_mask_prob = mcf.get("burst_mask_prob", 0.20)
+    burst_mask_max_len = mcf.get("burst_mask_max_len", 8)
+    burst_insert_prob = mcf.get("burst_insert_prob", 0.15)
+    burst_insert_max_len = mcf.get("burst_insert_max_len", 6)
+    burst_expand_prob = mcf.get("burst_expand_prob", 0.10)
+    burst_expand_max_len = mcf.get("burst_expand_max_len", 4)
+    burst_stutter_prob = mcf.get("burst_stutter_prob", 0.25)
+    burst_stutter_max_len = mcf.get("burst_stutter_max_len", 20)
     noise_pool = list(range(100, min(mcf.get("noise_vocab_size", 30000) + 100,
                                    tokenizer.vocab_size)))
 
@@ -480,9 +598,23 @@ def train(args, config):
                                                                                tokenizer.pad_token_id)
             clean_ids = clean_ids_cpu.to(device)
             attn = attn_cpu.to(device)
-            noisy_ids, tag_labels, gen_labels = build_batch_labels(
+            noisy_ids, clean_aligned_ids, tag_labels, gen_labels = build_batch_labels(
                 clean_ids, attn, prompt_lens, corruptor, scheme, mask_prob, mask_ratio,
-                noise_pool, mask_id, pad_id, S, device, stutter_prob=stutter_prob,
+                noise_pool, mask_id, pad_id, S, device,
+                stutter_prob=stutter_prob,
+                tokenizer=tokenizer,
+                replace_ratio=replace_ratio,
+                delete_ratio=delete_ratio,
+                insert_ratio=insert_ratio,
+                expand_ratio=expand_ratio,
+                burst_mask_prob=burst_mask_prob,
+                burst_mask_max_len=burst_mask_max_len,
+                burst_insert_prob=burst_insert_prob,
+                burst_insert_max_len=burst_insert_max_len,
+                burst_expand_prob=burst_expand_prob,
+                burst_expand_max_len=burst_expand_max_len,
+                burst_stutter_prob=burst_stutter_prob,
+                burst_stutter_max_len=burst_stutter_max_len,
             )
 
             optimizer.zero_grad()
@@ -490,7 +622,7 @@ def train(args, config):
             # Embed the noisy (DP1) and clean (DP2) canvases.
             with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
                 dp1 = embedder.embed_ids(noisy_ids, attn)
-                dp2 = embedder.embed_ids(clean_ids, attn).detach()
+                dp2 = embedder.embed_ids(clean_aligned_ids, attn).detach()
                 # Condition the score on ground-truth tags when using the
                 # edit-conditioned score net (phase 2).
                 cond = tag_labels.clamp(0, 5) if mcfg.get("edit_conditioned_score", False) else None
@@ -506,9 +638,14 @@ def train(args, config):
                                                        attention_mask=attn,
                                                        expose_ratio=expose_ratio)
                 else:
-                    loss, loss_dict = hybrid.loss(dp1, dp2, clean_ids, noisy_ids, attn,
-                                                  t=torch.rand(dp1.shape[0], device=device),
-                                                  expose_ratio=expose_ratio)
+                    loss, loss_dict = hybrid.loss(
+                        dp1, dp2, clean_aligned_ids, noisy_ids, attn,
+                        t=torch.rand(dp1.shape[0], device=device),
+                        expose_ratio=expose_ratio,
+                        tag_labels=tag_labels,
+                        gen_labels=gen_labels,
+                        recon_steps=recon_steps,
+                    )
             loss.backward()
             nn.utils.clip_grad_norm_(score_params, tcfg["grad_clip"])
             if head_params:
@@ -539,8 +676,8 @@ def train(args, config):
                           f"recon_err {diag['recon_err']:.4f} (ident {diag['identity']:.4f}) | "
                           f"rep_recon {diag.get('rep_recon', 0.0):.4f} (rep_ident {diag.get('rep_ident', 0.0):.4f})")
                     print(f"  [diag] Heads: Top-1 Acc {diag['top1_acc']:.1f}%, Top-5 Acc {diag['top5_acc']:.1f}%, "
-                          f"Replace-F1 {diag['rep_f1']:.1f}% (prec {diag['rep_prec']:.1f}%, rec {diag['rep_rec']:.1f}%), "
-                          f"Keep-Acc {diag['keep_acc']:.1f}%")
+                          f"Keep-Acc {diag['keep_acc']:.1f}%, Rep-F1 {diag['rep_f1']:.1f}% (prec {diag['rep_prec']:.1f}%, rec {diag['rep_rec']:.1f}%), "
+                          f"Del-Rec {diag.get('del_rec', 0.0):.1f}%, Ins-Rec {diag.get('ins_rec', 0.0):.1f}%, Exp-Rec {diag.get('exp_rec', 0.0):.1f}%")
                     print(f"  [diag] LM-Head Decode: Top-1 {diag['lm_top1_acc']:.1f}%, Top-5 {diag['lm_top5_acc']:.1f}% | "
                           f"NN Decode: Top-1 {diag['nn_top1_acc']:.1f}%, Top-5 {diag['nn_top5_acc']:.1f}%")
 
@@ -551,11 +688,26 @@ def train(args, config):
                         hybrid, embedder, tokenizer, corruptor, scheme,
                         val_batches, mask_prob, mask_ratio, noise_pool, mask_id, pad_id, S,
                         device, amp_dtype, mcfg,
+                        stutter_prob=stutter_prob,
+                        replace_ratio=replace_ratio,
+                        delete_ratio=delete_ratio,
+                        insert_ratio=insert_ratio,
+                        expand_ratio=expand_ratio,
+                        recon_steps=recon_steps if recon_steps is not None else 50,
+                        burst_mask_prob=burst_mask_prob,
+                        burst_mask_max_len=burst_mask_max_len,
+                        burst_insert_prob=burst_insert_prob,
+                        burst_insert_max_len=burst_insert_max_len,
+                        burst_expand_prob=burst_expand_prob,
+                        burst_expand_max_len=burst_expand_max_len,
+                        burst_stutter_prob=burst_stutter_prob,
+                        burst_stutter_max_len=burst_stutter_max_len,
                     )
                 if val_metrics is not None:
                     val_loss = val_metrics["total"]
+                    val_rout_str = f" rout {val_metrics['router']:.3f}" if val_metrics.get("router", 0.0) > 0 else ""
                     print(f"  [eval] step {global_step} val_loss {val_loss:.4f} "
-                          f"[sm {val_metrics['score_matching']:.3f} tag {val_metrics['tag']:.3f} "
+                          f"[sm {val_metrics['score_matching']:.3f}{val_rout_str} tag {val_metrics['tag']:.3f} "
                           f"gen {val_metrics['gen']:.3f}] (best {best_val:.4f})")
                 else:
                     val_loss = loss.item()

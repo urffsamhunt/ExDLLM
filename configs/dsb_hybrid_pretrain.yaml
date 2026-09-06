@@ -38,7 +38,7 @@ model:
   num_layers: 3
   time_embed_dim: 128
   # Optional per-class weights for the tagger (KEEP/DELETE/REPLACE/INSERT/EXPAND).
-  tag_weights: [0.7, 0.8, 1.0, 2.0, 4.0]
+  tag_weights: [0.7, 1.5, 1.0, 2.0, 3.0]
 
 dsb:
   beta_schedule: "linear"
@@ -65,11 +65,20 @@ data:
     noise_vocab_size: 30000      # Samples from real dictionary words (top 30k)
     mask_prob: 0.35              # Raised from 0.25 → 0.35 to reduce KEEP prior dominance
     mask_ratio: 0.25             # 25% <mask_id>, 75% real words / typos
-    stutter_prob: 0.30           # P(injecting one adjacent-duplicate stutter per sentence)
+    stutter_prob: 0.15           # P(fallback adjacent-duplicate stutter)
     replace_ratio: 0.15          # 15% random real word & typo replacement (teaches REPLACE on real words)
     delete_ratio: 0.08           # 8% words deleted (teaches INSERT / EXPAND)
     insert_ratio: 0.08           # 8% extraneous words inserted (teaches DELETE)
     expand_ratio: 0.05           # 5% spans compressed into [EXPAND]
+    # Multi-token burst corruption parameters:
+    burst_mask_prob: 0.20        # P(injecting a multi-token burst mask demask span)
+    burst_mask_max_len: 8        # Max length of burst mask (2 to 8 tokens)
+    burst_insert_prob: 0.15      # P(injecting a burst insert span)
+    burst_insert_max_len: 6      # Max length of burst insert (2 to 6 tokens)
+    burst_expand_prob: 0.10      # P(injecting a burst expand span)
+    burst_expand_max_len: 4      # Max length of burst expand (2 to 4 tokens)
+    burst_stutter_prob: 0.25     # P(injecting a burst duplicate stutter run)
+    burst_stutter_max_len: 20    # Max length of burst stutter (up to 20 tokens)
     expand_prob: 0.10            # (full scheme)
     insert_prob: 0.15            # (full scheme)
     t_skew: 2.0                  # (full scheme)
@@ -91,4 +100,4 @@ training:
   # with tagger (~0.05) and generator (~0.3).
   lambda_sm: 20.0
   lambda_tag: 1.0
-  lambda_gen: 0.1
+  lambda_gen: 1.0
