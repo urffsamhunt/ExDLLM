@@ -356,7 +356,8 @@ class DiffSchrodingerBridge(nn.Module):
         dp1: torch.Tensor,
         dp2: torch.Tensor,
         t: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return_mu: bool = False,
+    ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """
         Sample the noisy intermediate x_t given both endpoints.
 
@@ -364,11 +365,13 @@ class DiffSchrodingerBridge(nn.Module):
             dp1: (B, D) or (B, S, D) pure input.
             dp2: (B, D) or (B, S, D) output.
             t:   (B,) noise levels in [0, 1].
+            return_mu: If True, also returns mu (the clean bridge mean before noise).
 
         Returns:
             x_t: noisy point.
             target: training target — either u = mu_t - x_t (u-parametrization)
                     or dp2 directly (x0-prediction), depending on prediction_target.
+            mu (optional): clean bridge mean trajectory without Gaussian diffusion noise.
         """
         t_b = t.reshape(-1, 1, 1) if dp1.dim() == 3 else t.reshape(-1, 1)
         alpha_t = self._alpha_at(t).reshape_as(t_b)
@@ -380,18 +383,13 @@ class DiffSchrodingerBridge(nn.Module):
         x_t = mu + sigma_t * z
 
         if self.prediction_target == "x0":
-            # x0-prediction: the network directly predicts the clean target DP2.
-            # No algebraic inversion needed. No (1-alpha_t) singularity.
-            return x_t, dp2
+            target = dp2
         else:
-            # u-parametrization: predict u = mu - x_t (== -sigma_t * z) instead of
-            # the raw score s = u / sigma2_t. The score spans ~4 orders of magnitude
-            # across t (sigma2: 1e-4 -> 0.5), which a small MLP cannot represent —
-            # the chronic cause of low "signal captured". Since
-            # sigma2 * ||s_pred - s*||^2 == ||u_pred - u*||^2, the u-parametrization
-            # is the SAME objective without the dynamic-range problem.
-            u = mu - x_t
-            return x_t, u
+            target = mu - x_t
+
+        if return_mu:
+            return x_t, target, mu
+        return x_t, target
 
     # ── Training loss: denoising score matching ───────────────────────────────
 

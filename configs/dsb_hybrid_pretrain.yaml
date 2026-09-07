@@ -39,6 +39,14 @@ model:
   time_embed_dim: 128
   # Optional per-class weights for the tagger (KEEP/DELETE/REPLACE/INSERT/EXPAND).
   tag_weights: [0.7, 1.5, 1.0, 2.0, 3.0]
+  # Subspace Factorization: Decouples macro-semantic basin navigation (512-dim)
+  # from fine-grained lexical entity discrimination (256-dim) with angular margin.
+  subspace_factorization: true
+  macro_dim: 512
+  lexical_dim: 256
+  lexical_loss_weight: 1.5
+  angular_margin: 0.05
+  margin_scale: 64.0
 
 dsb:
   beta_schedule: "linear"

@@ -167,7 +167,16 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
                 condition_heads = True
 
     embed_weight = embedder.encoder.get_input_embeddings().weight
+    subspace_enabled = bool(mcfg.get("subspace_factorization", False))
+    if state_dict is not None and "generator.lex_proj.weight" in state_dict:
+        subspace_enabled = True
+    macro_dim = int(mcfg.get("macro_dim", 512))
+    lexical_dim = int(mcfg.get("lexical_dim", 256))
+    lex_weight = float(mcfg.get("lexical_loss_weight", 1.5))
+    ang_margin = float(mcfg.get("angular_margin", 0.05))
+    m_scale = float(mcfg.get("margin_scale", 64.0))
     lm_head = getattr(embedder, "lm_head", None)
+
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
         lambda_tag=config["training"].get("lambda_tag", 1.0),
@@ -178,6 +187,12 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
         embed_weight=embed_weight,
         tie_weights=mcfg.get("tie_weights", True),
         lm_head=lm_head,
+        subspace_factorization=subspace_enabled,
+        macro_dim=macro_dim,
+        lexical_dim=lexical_dim,
+        lexical_loss_weight=lex_weight,
+        angular_margin=ang_margin,
+        margin_scale=m_scale,
     ).to(device)
     return embedder, hybrid, tokenizer
 
@@ -248,6 +263,16 @@ def main():
     parser.add_argument("--decode_mode", choices=["genhead", "lm_head", "nearest"], default="genhead",
                         help="Token decode mode: 'genhead' (learned GenHead MLP), 'lm_head' (backbone pretrained MLM head), or 'nearest' (Layer 0 cosine similarity)")
     parser.add_argument("--k", type=int, default=5, help="nearest neighbors to show (plain DSB)")
+    parser.add_argument("--log_operations", "--verbose", action=argparse.BooleanOptionalAction, default=True,
+                        help="Print detailed per-iteration operation logs (default: True)")
+    parser.add_argument("--keep_threshold", type=float, default=0.0,
+                        help="Confidence-gated KEEP: minimum probability to allow KEEP (e.g. 0.85; 0.0 = disabled)")
+    parser.add_argument("--fluency_threshold", type=float, default=0.0,
+                        help="Rolling N-gram / MLM fluency gate: minimum likelihood to allow KEEP (e.g. 0.05; 0.0 = disabled)")
+    parser.add_argument("--refine_cond", choices=["initial", "self"], default="self",
+                        help="Refinement conditioning mode: 'self' conditions on current canvas (default); 'initial' anchors to initial DP1")
+    parser.add_argument("--min_iterations", type=int, default=1,
+                        help="Minimum refinement iterations before allowing early convergence exit (default: 1)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -355,10 +380,16 @@ def main():
             texts = hybrid.generate_text(
                 x, tokenizer, embedder,
                 temperature=args.temperature, top_k=args.top_k, top_p=args.top_p,
-                max_iterations=args.max_iterations, max_len=args.max_len,
+                max_iterations=args.max_iterations,
+                max_len=args.max_len or config.get("model", {}).get("max_length", 128),
+                min_iterations=args.min_iterations,
                 dp1=dp1, seed_ids=[canvas_ids],
                 repetition_penalty=args.repetition_penalty,
                 decode_mode=args.decode_mode,
+                log_operations=args.log_operations,
+                keep_threshold=args.keep_threshold,
+                fluency_threshold=args.fluency_threshold,
+                refine_cond_mode=args.refine_cond,
             )
         t_decode = time.perf_counter()
         print("Generated Output:")

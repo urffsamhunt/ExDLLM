@@ -50,6 +50,7 @@ from dllm.dsb import DiffSchrodingerBridge  # concrete type for annotations
 # Edit tag indices, matching the DLLM tagger ordering.
 KEEP, DELETE, REPLACE, INSERT, EXPAND = 0, 1, 2, 3, 4
 NUM_TAGS = 5
+TAG_NAMES = ["KEEP", "DELETE", "REPLACE", "INSERT", "EXPAND"]
 
 
 # ── Edit-conditioned score network (Phase 2) ─────────────────────────────────
@@ -193,6 +194,79 @@ def _is_syntax_token(tok: int, tokenizer: Optional[Any] = None) -> bool:
     return False
 
 
+def apply_collapse_drift(
+    dp2: torch.Tensor,
+    del_mask: torch.Tensor,
+    attn: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """
+    Interpolated Collapse Drift for continuous Diffusion Schrödinger Bridge.
+
+    For positions marked for DELETE (del_mask == True), setting DP2 == DP1 causes
+    zero drift in the continuous SDE (u_target = DP2 - DP1 = 0), which aliases
+    DELETE with KEEP and freezes spurious stutters into the continuous trajectory.
+
+    This function replaces DP2[b, i] at DELETE positions with the smooth geometric
+    interpolation between its nearest valid non-deleted clean neighbors:
+        DP2[b, i] = (1 - alpha_i) * DP2[b, left] + alpha_i * DP2[b, right]
+
+    This gives the continuous bridge a non-zero, directional contraction vector
+    pulling the spurious representation directly into the boundary seam between
+    its valid neighbors.
+    """
+    if not del_mask.any():
+        return dp2
+
+    out_dp2 = dp2.clone()
+    B, S, D = dp2.shape
+    valid_mask = (attn == 1) if attn is not None else torch.ones((B, S), dtype=torch.bool, device=dp2.device)
+    active_del = del_mask & valid_mask
+
+    for b in range(B):
+        row_del = active_del[b]
+        if not row_del.any():
+            continue
+
+        indices = torch.where(row_del)[0].tolist()
+        spans = []
+        start = indices[0]
+        prev = indices[0]
+        for idx in indices[1:]:
+            if idx == prev + 1:
+                prev = idx
+            else:
+                spans.append((start, prev))
+                start = idx
+                prev = idx
+        spans.append((start, prev))
+
+        for l, r in spans:
+            left_idx = l - 1
+            while left_idx >= 0 and (row_del[left_idx] or not valid_mask[b, left_idx]):
+                left_idx -= 1
+
+            right_idx = r + 1
+            while right_idx < S and (row_del[right_idx] or not valid_mask[b, right_idx]):
+                right_idx += 1
+
+            has_left = (left_idx >= 0)
+            has_right = (right_idx < S)
+
+            if has_left and has_right:
+                v_l = dp2[b, left_idx]
+                v_r = dp2[b, right_idx]
+                span_len = (right_idx - left_idx)
+                for i in range(l, r + 1):
+                    alpha = (i - left_idx) / span_len
+                    out_dp2[b, i] = (1.0 - alpha) * v_l + alpha * v_r
+            elif has_left:
+                out_dp2[b, l:r+1] = dp2[b, left_idx]
+            elif has_right:
+                out_dp2[b, l:r+1] = dp2[b, right_idx]
+
+    return out_dp2
+
+
 def corrupt_multiroute(
     clean_ids: List[int],
     tokenizer: Optional[Any] = None,
@@ -217,14 +291,14 @@ def corrupt_multiroute(
     rng: Optional[random.Random] = None,
 ) -> Tuple[List[int], List[int], List[int], List[int]]:
     """
-    Unified Multi-Route & Burst Blob Corruption Engine.
+    Non-destructive Multi-Route & Burst Blob Corruption Engine.
     Generates balanced distributions across all 5 edit operations with contiguous bursts:
       - BURST MASK DEMASKS: Multi-token mask spans (L in [2, burst_mask_max_len]) -> REPLACE
-      - BURST INSERTION: Contiguous omitted clause slots (L in [2, burst_insert_max_len]) -> INSERT
-      - BURST EXPANSION: Multi-word compressed span slots (L in [2, burst_expand_max_len]) -> EXPAND
+      - BURST INSERTION: Omitted clauses/tokens -> subsequent anchor token tagged INSERT with gen = omitted
+      - BURST EXPANSION: Multi-word compressed spans (L in [2, burst_expand_max_len]) -> EXPAND
       - BURST STUTTERS: Degenerate repetition loops up to 20 tokens -> Dual-route:
-          * 50% Route A (DELETE): spurious duplicate loop collapse.
-          * 50% Route B (REPLACE): degenerate loop covering semantic phrase.
+          * 50% Route A (DELETE): spurious duplicate loops inserted without destroying clean words.
+          * 50% Route B (REPLACE): degenerate loops covering semantic phrases.
       - SYNTAX / CODE GUARD: Structural syntax (indentation, brackets, separators) is strictly
         protected from artificial stutter corruption, preserving legitimate code syntax.
       - RESIDUAL TOKEN PERTURBATIONS: QWERTY typos, morphological inflections, and distractor noise.
@@ -234,51 +308,39 @@ def corrupt_multiroute(
     """
     rng = rng if rng is not None else random.Random()
     n_tokens = len(clean_ids)
-    noisy = list(clean_ids)
-    clean_aligned = list(clean_ids)
-    tags = [KEEP] * n_tokens
-    gen = [-100] * n_tokens
-    occupied = [False] * n_tokens
+    if n_tokens <= 2:
+        return list(clean_ids), list(clean_ids), [KEEP] * n_tokens, [-100] * n_tokens
 
-    # ── Phase 1: Burst Stutters (Up to burst_stutter_max_len tokens) ─────────
+    # Plan modifications per clean token index.
+    # plan[i] = None (default residual), or special directive dict
+    plan = [None] * n_tokens
     stutter_placed = False
+
+    # ── Phase 1: Burst Stutters ──────────────────────────────────────────────
     if burst_stutter_prob > 0.0 and rng.random() < burst_stutter_prob and n_tokens > 6:
         candidates = [
             i for i in range(1, n_tokens - 2)
-            if not occupied[i]
-            and clean_ids[i] != mask_id
-            and not _is_syntax_token(clean_ids[i], tokenizer)
+            if clean_ids[i] != mask_id and not _is_syntax_token(clean_ids[i], tokenizer)
         ]
         if candidates:
             idx = rng.choice(candidates)
-            max_k = min(burst_stutter_max_len, n_tokens - idx)
-            if max_k >= 2:
-                run_weights = [35, 25, 15, 10, 5, 4, 3, 2, 1]
-                run_choices = [2, 3, 4, 5, 6, 8, 10, 15, 20]
-                k = rng.choices(run_choices, weights=run_weights)[0]
-                k = min(k, max_k)
-                avail_k = 1
-                while avail_k < k and (idx + avail_k) < n_tokens and not occupied[idx + avail_k]:
-                    avail_k += 1
-                k = avail_k
+            run_weights = [35, 25, 15, 10, 5, 4, 3, 2, 1]
+            run_choices = [2, 3, 4, 5, 6, 8, 10, 15, 20]
+            k = rng.choices(run_choices, weights=run_weights)[0]
+            k = min(k, burst_stutter_max_len)
+            route_a = (rng.random() < 0.5)
 
-                if k >= 2:
-                    tok_to_repeat = clean_ids[idx]
-                    route_a = (rng.random() < 0.5)
-                    occupied[idx] = True
-                    for j in range(idx + 1, idx + k):
-                        noisy[j] = tok_to_repeat
-                        occupied[j] = True
-                        if route_a:
-                            # Route A: Spurious stutter loop -> DELETE
-                            tags[j] = DELETE
-                            clean_aligned[j] = tok_to_repeat
-                            gen[j] = -100
-                        else:
-                            # Route B: Degenerate loop covering clean phrase -> REPLACE
-                            tags[j] = REPLACE
-                            clean_aligned[j] = clean_ids[j]
-                            gen[j] = clean_ids[j]
+            if route_a:
+                # Route A: Spurious duplicate loop -> insert extra duplicate tokens (DELETE)
+                # Subsequent clean words are NOT destroyed!
+                plan[idx] = {"op": "burst_stutter_a", "k": k, "tok": clean_ids[idx]}
+                stutter_placed = True
+            else:
+                # Route B: In-place repetition covering clean words -> REPLACE
+                max_b = min(k, n_tokens - 1 - idx)
+                if max_b >= 2:
+                    for j in range(idx + 1, idx + max_b):
+                        plan[j] = {"op": "replace_stutter_b", "tok": clean_ids[idx]}
                     stutter_placed = True
 
     # ── Phase 2: Burst Mask Demask Spans ─────────────────────────────────────
@@ -288,147 +350,220 @@ def corrupt_multiroute(
             L = rng.randint(2, max_L)
             possible_starts = [
                 i for i in range(1, n_tokens - L)
-                if not any(occupied[i + off] or _is_syntax_token(clean_ids[i + off], tokenizer) for off in range(L))
+                if all(plan[i + off] is None and not _is_syntax_token(clean_ids[i + off], tokenizer) for off in range(L))
             ]
             if possible_starts:
                 start_i = rng.choice(possible_starts)
                 for j in range(start_i, start_i + L):
-                    noisy[j] = mask_id
-                    tags[j] = REPLACE
-                    clean_aligned[j] = clean_ids[j]
-                    gen[j] = clean_ids[j]
-                    occupied[j] = True
+                    plan[j] = {"op": "mask_span"}
 
-    # ── Phase 3: Burst Insertion Spans ───────────────────────────────────────
+    # ── Phase 3: Burst Insertion Spans (Omitted clean tokens -> INSERT) ──────
     if burst_insert_prob > 0.0 and rng.random() < burst_insert_prob and n_tokens > 8:
-        max_L = min(burst_insert_max_len, n_tokens - 2)
-        if max_L >= 2:
-            L = rng.randint(2, max_L)
-            possible_starts = [
-                i for i in range(1, n_tokens - L)
-                if not any(occupied[i + off] or _is_syntax_token(clean_ids[i + off], tokenizer) for off in range(L))
-            ]
-            if possible_starts:
-                start_i = rng.choice(possible_starts)
-                for j in range(start_i, start_i + L):
-                    noisy[j] = mask_id
-                    tags[j] = INSERT
-                    clean_aligned[j] = clean_ids[j]
-                    gen[j] = clean_ids[j]
-                    occupied[j] = True
+        # A single omitted clean token taught as INSERT at the subsequent anchor token
+        candidates = [
+            i for i in range(1, n_tokens - 2)
+            if plan[i] is None and plan[i + 1] is None
+            and not _is_syntax_token(clean_ids[i], tokenizer)
+        ]
+        if candidates:
+            idx = rng.choice(candidates)
+            # Omit clean_ids[idx], mark clean_ids[idx+1] as INSERT with gen = clean_ids[idx]
+            plan[idx] = {"op": "omitted_for_insert"}
+            plan[idx + 1] = {"op": "anchor_insert", "omitted_tok": clean_ids[idx]}
 
     # ── Phase 4: Burst Expansion Spans ───────────────────────────────────────
     if burst_expand_prob > 0.0 and rng.random() < burst_expand_prob and n_tokens > 8:
-        max_L = min(burst_expand_max_len, n_tokens - 2)
-        if max_L >= 2:
-            L = rng.randint(2, max_L)
-            possible_starts = [
-                i for i in range(1, n_tokens - L)
-                if not any(occupied[i + off] or _is_syntax_token(clean_ids[i + off], tokenizer) for off in range(L))
-            ]
-            if possible_starts:
-                start_i = rng.choice(possible_starts)
-                for j in range(start_i, start_i + L):
-                    noisy[j] = expand_id if expand_id is not None else mask_id
-                    tags[j] = EXPAND
-                    clean_aligned[j] = clean_ids[j]
-                    gen[j] = clean_ids[j]
-                    occupied[j] = True
+        max_L = min(burst_expand_max_len, 4)
+        candidates = [
+            i for i in range(1, n_tokens - max_L)
+            if all(plan[i + off] is None and not _is_syntax_token(clean_ids[i + off], tokenizer) for off in range(max_L))
+        ]
+        if candidates:
+            idx = rng.choice(candidates)
+            # Compress clean_ids[idx : idx + max_L] into a single expand_id slot
+            plan[idx] = {"op": "expand_start", "span_len": max_L}
+            for off in range(1, max_L):
+                plan[idx + off] = {"op": "expand_skip"}
 
-    # ── Phase 5: Residual Fine-Grained Token Perturbations ───────────────────
-    typo_cache = {}
-
-    for i in range(n_tokens):
-        if occupied[i]:
-            continue
-
-        tok = clean_ids[i]
-        if tok == mask_id:
-            continue
-
-        if _is_syntax_token(tok, tokenizer):
-            continue  # Protect structural syntax (indentation, brackets, etc.) from corruption
-
-        roll = rng.random()
-        # 1. Single Masking ([MASK]) -> REPLACE
-        if roll < mask_prob * mask_ratio:
-            noisy[i] = mask_id
-            tags[i] = REPLACE
-            gen[i] = tok
-            clean_aligned[i] = tok
-
-        # 2. Typos & Morphological Autospell -> REPLACE
-        elif roll < mask_prob * mask_ratio + replace_ratio * 0.6:
-            perturbed_tok = None
-            if tokenizer is not None:
-                if tok not in typo_cache:
-                    try:
-                        w = tokenizer.decode([tok]).strip()
-                        if len(w) >= 3:
-                            w_p = _perturb_word_typo(w, rng) if rng.random() < 0.6 else _perturb_word_morph(w)
-                            enc = tokenizer.encode(w_p, add_special_tokens=False)
-                            if enc:
-                                typo_cache[tok] = enc[0]
-                    except Exception:
-                        pass
-                perturbed_tok = typo_cache.get(tok)
-
-            if perturbed_tok is None and noise_pool:
-                perturbed_tok = rng.choice(noise_pool)
-
-            noisy[i] = perturbed_tok if perturbed_tok is not None else mask_id
-            tags[i] = REPLACE
-            gen[i] = tok
-            clean_aligned[i] = tok
-
-        # 3. Real dictionary word distractor -> REPLACE
-        elif roll < mask_prob * mask_ratio + replace_ratio:
-            noisy[i] = rng.choice(noise_pool) if noise_pool else mask_id
-            tags[i] = REPLACE
-            gen[i] = tok
-            clean_aligned[i] = tok
-
-        # 4. Single Insert slot -> INSERT
-        elif roll < mask_prob * mask_ratio + replace_ratio + insert_ratio:
-            noisy[i] = mask_id
-            tags[i] = INSERT
-            gen[i] = tok
-            clean_aligned[i] = tok
-
-        # 5. Single Expand slot -> EXPAND
-        elif roll < mask_prob * mask_ratio + replace_ratio + insert_ratio + expand_ratio:
-            noisy[i] = expand_id if expand_id is not None else mask_id
-            tags[i] = EXPAND
-            gen[i] = tok
-            clean_aligned[i] = tok
-
-        # 6. Single Intrusive distractor token -> DELETE
-        elif roll < mask_prob * mask_ratio + replace_ratio + insert_ratio + expand_ratio + delete_ratio:
-            noisy[i] = rng.choice(noise_pool) if noise_pool else mask_id
-            tags[i] = DELETE
-            gen[i] = -100
-            clean_aligned[i] = noisy[i]
-
-    # ── Phase 6: Fallback Pairwise Adjacent Stutter ──────────────────────────
+    # ── Phase 5: Fallback Pairwise Adjacent Stutter ──────────────────────────
     if not stutter_placed and stutter_prob > 0.0 and rng.random() < stutter_prob and n_tokens > 4:
         candidates = [
             i for i in range(1, n_tokens - 1)
-            if clean_ids[i] != mask_id
-            and tags[i] == KEEP
-            and clean_ids[i - 1] != mask_id
+            if plan[i] is None and plan[i - 1] is None
             and not _is_syntax_token(clean_ids[i - 1], tokenizer)
         ]
         if candidates:
             idx = rng.choice(candidates)
-            noisy[idx] = clean_ids[idx - 1]
-            if rng.random() < 0.5:
-                tags[idx] = DELETE
-                gen[idx] = -100
-                clean_aligned[idx] = noisy[idx]
-            else:
-                tags[idx] = REPLACE
-                gen[idx] = clean_ids[idx]
-                clean_aligned[idx] = clean_ids[idx]
+            plan[idx] = {"op": "adjacent_stutter", "tok": clean_ids[idx - 1]}
+
+    # ── Assembly: Build 1:1 aligned outputs ──────────────────────────────────
+    noisy: List[int] = []
+    clean_aligned: List[int] = []
+    tags: List[int] = []
+    gen: List[int] = []
+
+    typo_cache = {}
+
+    i = 0
+    while i < n_tokens:
+        p = plan[i]
+        clean_tok = clean_ids[i]
+
+        if p is not None:
+            op = p["op"]
+            if op == "burst_stutter_a":
+                # Clean token itself (KEEP)
+                noisy.append(clean_tok)
+                clean_aligned.append(clean_tok)
+                tags.append(KEEP)
+                gen.append(-100)
+                # Extra duplicate tokens (DELETE)
+                stutter_k = p["k"]
+                stutter_tok = p["tok"]
+                for _ in range(stutter_k - 1):
+                    noisy.append(stutter_tok)
+                    clean_aligned.append(stutter_tok)
+                    tags.append(DELETE)
+                    gen.append(-100)
+                i += 1
+                continue
+
+            elif op == "replace_stutter_b":
+                noisy.append(p["tok"])
+                clean_aligned.append(clean_tok)
+                tags.append(REPLACE)
+                gen.append(clean_tok)
+                i += 1
+                continue
+
+            elif op == "mask_span":
+                noisy.append(mask_id)
+                clean_aligned.append(clean_tok)
+                tags.append(REPLACE)
+                gen.append(clean_tok)
+                i += 1
+                continue
+
+            elif op == "omitted_for_insert":
+                # Omitted from noisy!
+                i += 1
+                continue
+
+            elif op == "anchor_insert":
+                # This token is present, and omitted_tok should be inserted before it
+                noisy.append(clean_tok)
+                clean_aligned.append(clean_tok)
+                tags.append(INSERT)
+                gen.append(-100)
+                i += 1
+                continue
+
+            elif op == "expand_start":
+                # Compressed slot
+                noisy.append(expand_id if expand_id is not None else mask_id)
+                clean_aligned.append(clean_tok)
+                tags.append(EXPAND)
+                gen.append(-100)
+                i += 1
+                continue
+
+            elif op == "expand_skip":
+                # Absorbed into expansion
+                i += 1
+                continue
+
+            elif op == "adjacent_stutter":
+                # Insert duplicate token before clean_tok
+                dup_tok = p["tok"]
+                noisy.append(dup_tok)
+                clean_aligned.append(dup_tok)
+                tags.append(DELETE)
+                gen.append(-100)
+                # Then the clean token itself
+                noisy.append(clean_tok)
+                clean_aligned.append(clean_tok)
+                tags.append(KEEP)
+                gen.append(-100)
+                i += 1
+                continue
+
+        # Residual fine-grained perturbations
+        if _is_syntax_token(clean_tok, tokenizer) or clean_tok == mask_id:
+            noisy.append(clean_tok)
+            clean_aligned.append(clean_tok)
+            tags.append(KEEP)
+            gen.append(-100)
+            i += 1
+            continue
+
+        roll = rng.random()
+        # 1. Single Mask -> REPLACE
+        if roll < mask_prob * mask_ratio:
+            noisy.append(mask_id)
+            clean_aligned.append(clean_tok)
+            tags.append(REPLACE)
+            gen.append(clean_tok)
+
+        # 2. Typos & Morphological Inflections -> REPLACE
+        elif roll < mask_prob * mask_ratio + replace_ratio * 0.6:
+            perturbed_tok = None
+            if tokenizer is not None:
+                if clean_tok not in typo_cache:
+                    try:
+                        w = tokenizer.decode([clean_tok]).strip()
+                        if len(w) >= 3:
+                            w_p = _perturb_word_typo(w, rng) if rng.random() < 0.6 else _perturb_word_morph(w)
+                            enc = tokenizer.encode(w_p, add_special_tokens=False)
+                            if enc:
+                                typo_cache[clean_tok] = enc[0]
+                    except Exception:
+                        pass
+                perturbed_tok = typo_cache.get(clean_tok)
+            if perturbed_tok is None and noise_pool:
+                perturbed_tok = rng.choice(noise_pool)
+            noisy.append(perturbed_tok if perturbed_tok is not None else mask_id)
+            clean_aligned.append(clean_tok)
+            tags.append(REPLACE)
+            gen.append(clean_tok)
+
+        # 3. Real dictionary word distractor -> REPLACE
+        elif roll < mask_prob * mask_ratio + replace_ratio:
+            noisy.append(rng.choice(noise_pool) if noise_pool else mask_id)
+            clean_aligned.append(clean_tok)
+            tags.append(REPLACE)
+            gen.append(clean_tok)
+
+        # 4. Intrusive distractor token -> DELETE
+        elif roll < mask_prob * mask_ratio + replace_ratio + delete_ratio:
+            dist_tok = rng.choice(noise_pool) if noise_pool else mask_id
+            noisy.append(dist_tok)
+            clean_aligned.append(dist_tok)
+            tags.append(DELETE)
+            gen.append(-100)
+            # The clean token remains present as KEEP
+            noisy.append(clean_tok)
+            clean_aligned.append(clean_tok)
+            tags.append(KEEP)
+            gen.append(-100)
+
+        elif roll < mask_prob * mask_ratio + replace_ratio + delete_ratio + insert_ratio and (i + 1) < n_tokens:
+            next_tok = clean_ids[i + 1]
+            # Omit clean_tok, tag next_tok as INSERT (structural edit op)
+            noisy.append(next_tok)
+            clean_aligned.append(next_tok)
+            tags.append(INSERT)
+            gen.append(-100)
+            i += 2  # Consumed both i and i+1
+            continue
+
+        # 6. Default: KEEP
+        else:
+            noisy.append(clean_tok)
+            clean_aligned.append(clean_tok)
+            tags.append(KEEP)
+            gen.append(-100)
+
+        i += 1
 
     return noisy, clean_aligned, tags, gen
 
@@ -514,10 +649,21 @@ class TaggerHead(nn.Module):
     also what makes the head usable at generation time (t=1, cond=DP1).
     """
 
-    def __init__(self, dim: int, time_embed_dim: int = 128, cond_dim: int = 0):
+    def __init__(
+        self,
+        dim: int,
+        time_embed_dim: int = 128,
+        cond_dim: int = 0,
+        subspace_factorization: bool = False,
+        macro_dim: int = 512,
+        lexical_dim: int = 256,
+    ):
         super().__init__()
         self.cond_dim = cond_dim
         self.time_embed_dim = time_embed_dim
+        self.subspace_factorization = subspace_factorization
+        self.macro_dim = macro_dim
+        self.lexical_dim = lexical_dim
         if time_embed_dim > 0:
             self.time_mlp = nn.Sequential(
                 nn.Linear(1, time_embed_dim),
@@ -557,16 +703,41 @@ class GenHead(nn.Module):
     the pretrained LM head (dense, layer_norm, decoder weight, and vocab bias),
     giving instant zero-shot MLM prediction quality on Layer 12 contextual hidden states.
     When embed_weight is provided without lm_head, initializes/ties the final projection.
+
+    Subspace Factorization:
+    When subspace_factorization is enabled, the input embedding is partitioned into:
+      - x_macro (0:macro_dim): broad syntactic and semantic basin
+      - x_lexical (macro_dim:end): fine-grained lexical coordinates
+    An angular margin projection (CosFace style) is applied to enforce wide separation
+    between co-hyponyms in the lexical subspace, preventing adjacent Voronoi cell spillage.
     """
 
-    def __init__(self, dim: int, vocab_size: int,
-                 time_embed_dim: int = 128, cond_dim: int = 0,
-                 embed_weight: Optional[torch.Tensor] = None,
-                 tie_weights: bool = True,
-                 lm_head: Optional[nn.Module] = None):
+    def __init__(
+        self,
+        dim: int,
+        vocab_size: int,
+        time_embed_dim: int = 128,
+        cond_dim: int = 0,
+        embed_weight: Optional[torch.Tensor] = None,
+        tie_weights: bool = True,
+        lm_head: Optional[nn.Module] = None,
+        subspace_factorization: bool = False,
+        macro_dim: int = 512,
+        lexical_dim: int = 256,
+        angular_margin: float = 0.05,
+        margin_scale: float = 64.0,
+    ):
         super().__init__()
+        self.dim = dim
+        self.vocab_size = vocab_size
         self.cond_dim = cond_dim
         self.time_embed_dim = time_embed_dim
+        self.subspace_factorization = subspace_factorization
+        self.macro_dim = macro_dim
+        self.lexical_dim = lexical_dim
+        self.angular_margin = angular_margin
+        self.margin_scale = margin_scale
+
         if time_embed_dim > 0:
             self.time_mlp = nn.Sequential(
                 nn.Linear(1, time_embed_dim),
@@ -576,12 +747,21 @@ class GenHead(nn.Module):
             )
         else:
             self.time_mlp = None
+
         self.net = nn.Sequential(
             nn.Linear(dim + cond_dim + time_embed_dim, dim),
             nn.GELU(),
             nn.LayerNorm(dim),
             nn.Linear(dim, vocab_size),
         )
+
+        if subspace_factorization:
+            # Dedicated residual projection for fine-grained lexical coordinates
+            self.lex_proj = nn.Linear(lexical_dim, dim, bias=False)
+            nn.init.zeros_(self.lex_proj.weight)
+        else:
+            self.lex_proj = None
+
         if lm_head is not None:
             with torch.no_grad():
                 # Zero out weights for cond and time slices initially so GenHead
@@ -616,8 +796,13 @@ class GenHead(nn.Module):
             if tie_weights:
                 self.net[3].weight = embed_weight
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor,
-                cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        cond: Optional[torch.Tensor] = None,
+        targets: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         # x: (N, D) selected positions; t: (N,); cond: (N, D)
         h = x
         if self.cond_dim > 0:
@@ -627,7 +812,33 @@ class GenHead(nn.Module):
         if self.time_mlp is not None:
             t_emb = self.time_mlp(t.reshape(-1, 1))          # (N, T)
             h = torch.cat([h, t_emb], dim=-1)
-        return self.net(h)
+
+        # Base hidden representation through dense + GELU + LayerNorm
+        feat = self.net[2](self.net[1](self.net[0](h)))
+
+        # Subspace enhancement: inject fine lexical coordinates
+        if self.subspace_factorization and self.lex_proj is not None:
+            x_lex = x[:, self.macro_dim:]
+            feat = feat + self.lex_proj(x_lex)
+
+        # Projection to vocabulary logits:
+        if self.subspace_factorization and self.angular_margin > 0:
+            norm_feat = F.normalize(feat, dim=-1)
+            norm_w = F.normalize(self.net[3].weight, dim=-1)
+            cosine = F.linear(norm_feat, norm_w)  # (N, V)
+
+            if self.training and targets is not None:
+                # CosFace Additive Angular Margin penalty on ground truth targets
+                one_hot = torch.zeros_like(cosine)
+                one_hot.scatter_(1, targets.view(-1, 1), 1.0)
+                cosine = cosine - one_hot * self.angular_margin
+
+            logits = self.margin_scale * cosine
+            if self.net[3].bias is not None:
+                logits = logits + self.net[3].bias
+            return logits
+        else:
+            return self.net[3](feat)
 
 
 # ── The hybrid model ─────────────────────────────────────────────────────────
@@ -653,19 +864,52 @@ class DSBHybrid(nn.Module):
         embed_weight: Optional[torch.Tensor] = None,
         tie_weights: bool = True,
         lm_head: Optional[nn.Module] = None,
+        subspace_factorization: bool = False,
+        macro_dim: int = 512,
+        lexical_dim: int = 256,
+        lexical_loss_weight: float = 1.5,
+        angular_margin: float = 0.05,
+        margin_scale: float = 64.0,
     ):
         super().__init__()
         self.bridge: DiffSchrodingerBridge = bridge
         dim = bridge.dim
         self.condition_heads = condition_heads
+        self.subspace_factorization = subspace_factorization
+        self.macro_dim = macro_dim
+        self.lexical_dim = lexical_dim
+        self.lexical_loss_weight = lexical_loss_weight
+        self.angular_margin = angular_margin
+        self.margin_scale = margin_scale
+
         head_cond_dim = dim if condition_heads else 0
-        self.tagger = TaggerHead(dim, time_embed_dim=time_embed_dim,
-                                 cond_dim=head_cond_dim)
-        self.generator = GenHead(dim, vocab_size, time_embed_dim=time_embed_dim,
-                                 cond_dim=head_cond_dim,
-                                 embed_weight=embed_weight,
-                                 tie_weights=tie_weights,
-                                 lm_head=lm_head)
+        self.tagger = TaggerHead(
+            dim, time_embed_dim=time_embed_dim, cond_dim=head_cond_dim,
+            subspace_factorization=subspace_factorization,
+            macro_dim=macro_dim, lexical_dim=lexical_dim,
+        )
+        self.generator = GenHead(
+            dim, vocab_size, time_embed_dim=time_embed_dim,
+            cond_dim=head_cond_dim, embed_weight=embed_weight,
+            tie_weights=tie_weights, lm_head=lm_head,
+            subspace_factorization=subspace_factorization,
+            macro_dim=macro_dim, lexical_dim=lexical_dim,
+            angular_margin=angular_margin, margin_scale=margin_scale,
+        )
+        self.lambda_sm = lambda_sm
+        self.lambda_tag = lambda_tag
+        self.lambda_gen = lambda_gen
+        self.gen_ignore_index = gen_ignore_index
+        self.embed_weight = embed_weight
+        self.lm_head = lm_head
+        if tag_weights is not None:
+            self.register_buffer(
+                "_tag_weights",
+                torch.tensor(tag_weights, dtype=torch.float32),
+                persistent=False,
+            )
+        else:
+            self._tag_weights = None
         self.lambda_sm = lambda_sm
         self.lambda_tag = lambda_tag
         self.lambda_gen = lambda_gen
@@ -744,7 +988,7 @@ class DSBHybrid(nn.Module):
         B = dp1.shape[0]
         if t is None:
             t = torch.rand(B, device=dp1.device)
-        x_t, u_target = self.bridge.forward_sample(dp1, dp2, t)
+        x_t, u_target, mu = self.bridge.forward_sample(dp1, dp2, t, return_mu=True)
 
         has_router = getattr(self.bridge.score_net, "gated_drift", False)
         if has_router:
@@ -757,9 +1001,26 @@ class DSBHybrid(nn.Module):
 
         if attention_mask is not None and u_pred.dim() == 3:
             mask = attention_mask.unsqueeze(-1).float()
-            loss_sm = ((u_pred - u_target) ** 2 * mask).sum() / (mask.sum() * u_pred.shape[-1]).clamp(min=1.0)
+            if self.subspace_factorization:
+                m_dim = self.macro_dim
+                u_pred_m = u_pred[..., :m_dim]
+                u_tgt_m = u_target[..., :m_dim]
+                loss_sm_macro = ((u_pred_m - u_tgt_m) ** 2 * mask).sum() / (mask.sum() * m_dim).clamp(min=1.0)
+
+                u_pred_l = u_pred[..., m_dim:]
+                u_tgt_l = u_target[..., m_dim:]
+                l_dim = u_pred.shape[-1] - m_dim
+                loss_sm_lex = ((u_pred_l - u_tgt_l) ** 2 * mask).sum() / (mask.sum() * l_dim).clamp(min=1.0)
+
+                loss_sm = loss_sm_macro + self.lexical_loss_weight * loss_sm_lex
+            else:
+                loss_sm = ((u_pred - u_target) ** 2 * mask).sum() / (mask.sum() * u_pred.shape[-1]).clamp(min=1.0)
+                loss_sm_macro = loss_sm
+                loss_sm_lex = loss_sm
         else:
             loss_sm = F.mse_loss(u_pred, u_target)
+            loss_sm_macro = loss_sm
+            loss_sm_lex = loss_sm
 
         if x_t.dim() != 3:
             # Pooled (non-per-position) embeddings carry no per-token structure,
@@ -800,7 +1061,9 @@ class DSBHybrid(nn.Module):
                 x_gen = self.bridge.sample(dp1, steps=steps_exp, attention_mask=attention_mask, return_clean=True)    # (B, S, D) — SDE reconstruction
             t_gen = torch.ones(B, device=dp1.device)
         else:
-            x_gen = x_t
+            # Train GenHead along the smooth continuous bridge mean trajectory (mu),
+            # protecting token cosine discrimination from raw Gaussian noise (sigma*z).
+            x_gen = mu
             t_gen = t
 
         select = (gen_labels.reshape(-1) != self.gen_ignore_index) & (gen_labels.reshape(-1) >= 0)
@@ -809,19 +1072,24 @@ class DSBHybrid(nn.Module):
             lb = gen_labels.reshape(-1)[select]
             t_sel = t_gen.repeat_interleave(x_gen.shape[1], dim=0)[select]
             c_sel = dp1.reshape(-1, x_gen.shape[-1])[select]
-            gl = self.generator(xp, t_sel, cond=c_sel)         # (n, V)
-            loss_gen = F.cross_entropy(gl.float(), lb.clamp(0, gl.shape[-1] - 1))
+            target_ids = lb.clamp(0, self.generator.vocab_size - 1)
+            gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids)         # (n, V)
+            loss_gen = F.cross_entropy(gl.float(), target_ids)
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
 
         total = self.lambda_sm * loss_sm + self.lambda_tag * (loss_tag + loss_router) + self.lambda_gen * loss_gen
-        return total, {
+        res_dict = {
             "total": total.item(),
             "score_matching": loss_sm.item(),
             "tag": loss_tag.item(),
             "router": loss_router.item(),
             "gen": loss_gen.item(),
         }
+        if self.subspace_factorization:
+            res_dict["sm_macro"] = loss_sm_macro.item() if isinstance(loss_sm_macro, torch.Tensor) else float(loss_sm_macro)
+            res_dict["sm_lex"] = loss_sm_lex.item() if isinstance(loss_sm_lex, torch.Tensor) else float(loss_sm_lex)
+        return total, res_dict
 
     @torch.no_grad()
     def sample_embeddings(
@@ -1245,8 +1513,14 @@ class DSBHybrid(nn.Module):
                 break
             tag = tags[i]
             gen = gen_toks[i] if i < len(gen_toks) else tok
-            if tok in (bos, eos):
+            # Only protect true boundaries: leading BOS and trailing EOS
+            if i == 0 and tok == bos:
                 out.append(tok); continue
+            if i == len(canvas_ids) - 1 and tok == eos:
+                if tag == INSERT:
+                    out.append(gen if gen != M else tok)
+                out.append(tok)
+                continue
             if tag == DELETE:
                 continue
             elif tag == REPLACE:
@@ -1271,12 +1545,17 @@ class DSBHybrid(nn.Module):
         top_k: int = 50,
         top_p: float = 0.9,
         max_iterations: int = 8,
+        min_iterations: int = 1,
         max_len: Optional[int] = None,
         dp1: Optional[torch.Tensor] = None,  # (B, S, D) source embedding (head cond)
         seed_ids: Optional[List[List[int]]] = None,  # per-row starting canvas token ids
         repetition_penalty: float = 1.3,      # >1.0 suppresses repeated tokens; 1.0 = off
         decode_mode: str = "genhead",         # "genhead" (use learned GenHead) or "nearest" (cosine similarity to embed_weight)
         embed_weight: Optional[torch.Tensor] = None,  # token embedding matrix (defaults to self.embed_weight)
+        log_operations: bool = False,         # Whether to print per-iteration edit operation logs
+        keep_threshold: float = 0.0,          # Confidence gate: minimum KEEP probability to allow KEEP (e.g. 0.85); below demotes
+        fluency_threshold: float = 0.0,       # Rolling n-gram / MLM fluency gate: minimum likelihood to allow KEEP (e.g. 0.05)
+        refine_cond_mode: str = "self",       # "self" (legacy self-conditioning, default) or "initial" (anchor to initial DP1 via smooth interp)
     ) -> List[str]:
         """
         True variable-length iterative refinement decode (DLLM-style, ported).
@@ -1307,7 +1586,7 @@ class DSBHybrid(nn.Module):
         B = x.shape[0]
         S = x.shape[1]
         device = x.device
-        max_len = max_len if max_len is not None else S
+        max_len = max_len if max_len is not None else getattr(embedder, "max_length", 128)
         if self.tagger.cond_dim > 0 and dp1 is None:
             raise ValueError("conditioned heads require dp1 (the source embedding)")
 
@@ -1342,8 +1621,11 @@ class DSBHybrid(nn.Module):
                 c_row = None
                 if dp1_cur is not None:
                     c = dp1_cur[b:b+1]
-                    if c.shape[1] >= L:
-                        c_row = c[:, :L]
+                    if c.shape[1] == L:
+                        c_row = c
+                    elif c.shape[1] > 1:
+                        # Smooth 1D interpolation across sequence length dimension
+                        c_row = F.interpolate(c.permute(0, 2, 1).float(), size=L, mode='linear', align_corners=True).permute(0, 2, 1).to(c.dtype)
                     else:
                         c_pad = torch.zeros(1, L - c.shape[1], c.shape[2],
                                             device=c.device, dtype=c.dtype)
@@ -1364,21 +1646,68 @@ class DSBHybrid(nn.Module):
                     tag_logits = tag_logits - torch.log(self._tag_weights.to(tag_logits.device).clamp(min=1e-5))
 
                 tag_probs = F.softmax(tag_logits, dim=-1)
-                tags = tag_logits.argmax(-1).tolist()
+                raw_tags = tag_logits.argmax(-1).tolist()
+                raw_probs = tag_probs.tolist()
+                tags = list(raw_tags)
 
-                # Boundary token guard: never edit special/boundary tokens (<s>, </s>, <pad>)
+                # Boundary token guard: only protect true leading <s> and trailing </s>
                 cur_tokens = canvases[b]
-                for idx in range(len(cur_tokens)):
-                    if cur_tokens[idx] in special:
-                        tags[idx] = KEEP
+                override_notes = ["" for _ in range(len(cur_tokens))]
+                if len(cur_tokens) > 0 and cur_tokens[0] == bos:
+                    if raw_tags[0] != KEEP:
+                        override_notes[0] = "boundary token guard"
+                    tags[0] = KEEP
+                if len(cur_tokens) > 1 and cur_tokens[-1] == eos:
+                    # Trailing </s> can only be KEEP or INSERT (inserting words before </s>).
+                    # It must never be DELETE or REPLACE.
+                    if tags[-1] in (DELETE, REPLACE):
+                        override_notes[-1] = "boundary token guard"
+                        tags[-1] = KEEP
 
                 # Stutter / Repetition symmetry breaking:
-                # If adjacent non-special tokens are duplicate (e.g. "pack pack", "this this"),
-                # break symmetry by unconditionally forcing REPLACE on the duplicate slot
+                # If adjacent non-special tokens are duplicate (e.g. "this this", "lol lol"),
+                # collapse the duplicate loop by unconditionally forcing DELETE on duplicate slots
                 for idx in range(1, len(cur_tokens)):
                     if cur_tokens[idx] == cur_tokens[idx - 1] and cur_tokens[idx] not in special:
                         if idx < len(tags):
-                            tags[idx] = REPLACE
+                            if tags[idx] != DELETE:
+                                override_notes[idx] = "repetition stutter collapse"
+                            tags[idx] = DELETE
+
+                # Confidence gate: Reject weak KEEP predictions (demote to next-best edit op)
+                if keep_threshold > 0.0:
+                    for idx in range(len(cur_tokens)):
+                        if cur_tokens[idx] not in special and tags[idx] == KEEP:
+                            k_prob = raw_probs[idx][KEEP]
+                            if k_prob < keep_threshold:
+                                sub_logits = tag_logits[idx].clone()
+                                sub_logits[KEEP] = -1e9
+                                tags[idx] = sub_logits.argmax().item()
+                                override_notes[idx] = f"confidence gate (p={k_prob:.3f} < {keep_threshold:.2f})"
+
+                # Rolling N-Gram / MLM Fluency Gate: Check if current token / n-gram makes syntactic sense
+                if fluency_threshold > 0.0:
+                    lm_all_logits = None
+                    if hasattr(embedder, "decode_logits"):
+                        lm_all_logits = embedder.decode_logits(emb)[0]  # (L, V)
+                    elif self.lm_head is not None:
+                        lm_all_logits = self.lm_head(emb)[0]
+                    if lm_all_logits is not None:
+                        lm_all_probs = F.softmax(lm_all_logits, dim=-1)
+                        for idx in range(len(cur_tokens)):
+                            if cur_tokens[idx] not in special and tags[idx] == KEEP:
+                                win_start = max(0, idx - 1)
+                                win_end = min(len(cur_tokens), idx + 2)
+                                win_probs = [lm_all_probs[j, cur_tokens[j]].clamp(min=1e-9).item() for j in range(win_start, win_end)]
+                                import math
+                                win_fluency = math.exp(sum(math.log(p) for p in win_probs) / max(1, len(win_probs)))
+                                tok_prob = lm_all_probs[idx, cur_tokens[idx]].item()
+                                # Demote only if the token itself is improbable in context (avoids innocent neighbors getting infected by adjacent corrupt tokens)
+                                if tok_prob < fluency_threshold:
+                                    sub_logits = tag_logits[idx].clone()
+                                    sub_logits[KEEP] = -1e9
+                                    tags[idx] = sub_logits.argmax().item()
+                                    override_notes[idx] = f"fluency gate (tok_p={tok_prob:.4f} < {fluency_threshold:.2f})"
 
                 # Sparse generator evaluation: only evaluate the 250k-vocab GenHead
                 # and top-k sampling at positions that actually need token generation.
@@ -1407,6 +1736,11 @@ class DSBHybrid(nn.Module):
                     else:
                         gen_logits = self.generator(cur_sel, t_sel, cond=c_sel)  # (N_gen, V)
 
+                    # Suppress structural special tokens from being generated into content slots
+                    for sp_id in (bos, eos, pad, M):
+                        if sp_id is not None and sp_id < gen_logits.shape[-1]:
+                            gen_logits[:, sp_id] = -1e9
+
                     # Pass currently committed non-special canvas tokens as context
                     # for repetition penalty so the generator avoids repeating them.
                     committed = [t for t in canvases[b] if t not in special]
@@ -1424,20 +1758,111 @@ class DSBHybrid(nn.Module):
                 new_ids = self._apply_edits(
                     canvases[b], tags, gen_toks, bos, eos, pad, M
                 )
+                truncated = False
                 if len(new_ids) > max_len:
-                    new_ids = new_ids[:max_len]
+                    if eos is not None and (eos in new_ids or (len(cur_tokens) > 0 and cur_tokens[-1] == eos)):
+                        new_ids = new_ids[:max_len - 1] + [eos]
+                    else:
+                        new_ids = new_ids[:max_len]
+                    truncated = True
+                elif eos is not None and (len(cur_tokens) > 0 and cur_tokens[-1] == eos):
+                    if len(new_ids) == 0 or new_ids[-1] != eos:
+                        new_ids.append(eos)
+
+                if log_operations:
+                    cur_clean_text = " ".join(tokenizer.decode([t for t in cur_tokens if t not in special]).split())
+                    print(f"\n{'─' * 70}")
+                    batch_str = f" [Batch {b+1}/{B}]" if B > 1 else ""
+                    print(f"🔄 Iteration {iteration + 1}/{max_iterations}{batch_str} (Canvas: {len(cur_tokens)} tokens)")
+                    print(f"{'─' * 70}")
+                    print(f"Canvas Before: \"{cur_clean_text}\"")
+                    print(f"Tokens: {[tokenizer.decode([t]) for t in cur_tokens]}")
+                    print(f"\n  {'Pos':>3} | {'Token':<14} | {'Tag':<7} | {'Conf':>6} | {'Probs (K / D / R / I / E)':<29} | {'Action / Detail'}")
+                    print(f"  {'-'*3}-+-{'-'*14}-+-{'-'*7}-+-{'-'*6}-+-{'-'*29}-+-{'-'*30}")
+                    for pos in range(len(cur_tokens)):
+                        tok_id = cur_tokens[pos]
+                        if tok_id == bos:
+                            tok_disp = "<s>"
+                        elif tok_id == eos:
+                            tok_disp = "</s>"
+                        elif tok_id == pad:
+                            tok_disp = "<pad>"
+                        elif tok_id == M:
+                            tok_disp = "<mask>"
+                        else:
+                            tok_disp = tokenizer.decode([tok_id])
+                            tok_disp = repr(tok_disp)[1:-1]
+                        if len(tok_disp) > 14:
+                            tok_disp = tok_disp[:11] + "..."
+
+                        tg = tags[pos]
+                        tag_name = TAG_NAMES[tg]
+                        conf = raw_probs[pos][tg]
+                        probs_str = f"{raw_probs[pos][0]:.2f}/{raw_probs[pos][1]:.2f}/{raw_probs[pos][2]:.2f}/{raw_probs[pos][3]:.2f}/{raw_probs[pos][4]:.2f}"
+
+                        detail = ""
+                        if override_notes[pos]:
+                            detail += f"[{override_notes[pos]}] "
+                        if tg == KEEP:
+                            detail += "-"
+                        elif tg == DELETE:
+                            detail += "[DELETE]"
+                        elif tg == REPLACE:
+                            rep_tok_id = gen_toks[pos]
+                            rep_str = repr(tokenizer.decode([rep_tok_id]))[1:-1]
+                            detail += f"-> {rep_str} (id={rep_tok_id})"
+                        elif tg == INSERT:
+                            ins_tok_id = gen_toks[pos]
+                            ins_str = repr(tokenizer.decode([ins_tok_id]))[1:-1]
+                            detail += f"+ins {ins_str} (id={ins_tok_id})"
+                        elif tg == EXPAND:
+                            detail += "[EXPAND 2x<mask/mask>]"
+
+                        print(f"  {pos:>3} | {tok_disp:<14} | {tag_name:<7} | {conf:>6.3f} | {probs_str:<29} | {detail}")
+
+                    tag_counts = {name: tags.count(i) for i, name in enumerate(TAG_NAMES)}
+                    print(f"\n  Tag Distribution: " + " | ".join(f"{k}: {v}" for k, v in tag_counts.items()))
+
+                    edits = []
+                    for pos in range(len(cur_tokens)):
+                        if tags[pos] != KEEP:
+                            orig_repr = repr(tokenizer.decode([cur_tokens[pos]]))
+                            if tags[pos] == REPLACE:
+                                new_repr = repr(tokenizer.decode([gen_toks[pos]]))
+                                note = f" [{override_notes[pos]}]" if override_notes[pos] else ""
+                                edits.append(f"Pos {pos} {orig_repr} -> REPLACE -> {new_repr}{note}")
+                            elif tags[pos] == DELETE:
+                                edits.append(f"Pos {pos} {orig_repr} -> DELETE")
+                            elif tags[pos] == INSERT:
+                                ins_repr = repr(tokenizer.decode([gen_toks[pos]]))
+                                edits.append(f"Pos {pos} {orig_repr} -> INSERT {ins_repr}")
+                            elif tags[pos] == EXPAND:
+                                edits.append(f"Pos {pos} {orig_repr} -> EXPAND")
+
+                    if edits:
+                        print(f"  Executed Edits ({len(edits)}):")
+                        for e in edits:
+                            print(f"    • {e}")
+                    else:
+                        print("  Executed Edits: None (All tokens KEEP)")
+
+                    new_clean_text = " ".join(tokenizer.decode([t for t in new_ids if t not in special]).split())
+                    print(f"Canvas After:  \"{new_clean_text}\" ({len(new_ids)} tokens)" + (" [Truncated]" if truncated else ""))
+                    status_str = "MODIFIED" if new_ids != cur_tokens else "UNCHANGED (Converged)"
+                    print(f"Iteration Result: {status_str}")
 
                 if new_ids != canvases[b]:
                     changed = True
                 next_canvases.append(new_ids)
 
             canvases = next_canvases
-            # Require at least 2 iterations: the first pass re-embeds the canvas
-            # through the encoder and may unlock edits that weren't visible from
-            # the SDE embedding alone (e.g. adjacent-duplicate tokens whose
-            # contextual embeddings now signal REPLACE after a fresh encoder pass).
-            if not changed and iteration >= 1:
+            # Check convergence with min_iterations requirement
+            if not changed and iteration >= max(1, min_iterations):
+                if log_operations:
+                    print(f"\n⏹️ Refinement completed early at iteration {iteration + 1}: Canvas unchanged across iteration.")
                 break
+            if iteration == max_iterations - 1 and changed and log_operations:
+                print(f"\n⏹️ Refinement completed: reached maximum iterations ({max_iterations}).")
 
             # Re-embed: batch all rows padded to the longest current length.
             max_L = max((len(c) for c in canvases), default=0)
@@ -1449,7 +1874,10 @@ class DSBHybrid(nn.Module):
                 batch_attn[b, :len(row)] = 1
             embedded = embedder.embed_ids(batch_ids, batch_attn)  # (B, max_L, D)
             cur = [embedded[b, :len(canvases[b])] for b in range(B)]
-            dp1_cur = embedded
+            if refine_cond_mode == "initial" and dp1 is not None:
+                dp1_cur = dp1  # Maintain original prompt reference condition!
+            else:
+                dp1_cur = embedded  # Legacy self-conditioning
 
         # Final decode.
         results = []
@@ -1457,6 +1885,8 @@ class DSBHybrid(nn.Module):
             clean = [t for t in canvases[b] if t not in special]
             results.append(" ".join(tokenizer.decode(clean).split()))
         return results
+
+
 
 
 # ════════════════════════ Phase 2: full edit-aware SDE ════════════════════════

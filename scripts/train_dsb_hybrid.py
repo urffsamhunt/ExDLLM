@@ -43,6 +43,7 @@ from dllm.dsb_hybrid import (
     corrupt_fixed,
     corrupt_multiroute,
     corrupt_full,
+    apply_collapse_drift,
     KEEP,
     DELETE,
     REPLACE,
@@ -291,12 +292,13 @@ def build_batch_labels(
     clean_aligned_ids = torch.stack(clean_aligned_list).to(device)
     tag_labels = torch.stack(tag_list).to(device)
     gen_labels = torch.stack(gen_list).to(device)
-    # Overwrite pad slots (beyond real_len) with ignore labels.
-    pad_mask = (attention_mask == 0).to(device)[:, :cap]
+    # Overwrite pad slots (positions padded to cap) with ignore labels.
+    pad_mask = (noisy_ids == pad_id)
     clean_aligned_ids[pad_mask] = pad_id
     tag_labels[pad_mask] = -100
     gen_labels[pad_mask] = -100
-    return noisy_ids, clean_aligned_ids, tag_labels, gen_labels
+    actual_attn = (~pad_mask).long()
+    return noisy_ids, clean_aligned_ids, tag_labels, gen_labels, actual_attn
 
 
 @torch.no_grad()
@@ -334,7 +336,7 @@ def evaluate(
         )
         clean_ids = clean_ids_cpu.to(device)
         attn = attn_cpu.to(device)
-        noisy_ids, clean_aligned_ids, tag_labels, gen_labels = build_batch_labels(
+        noisy_ids, clean_aligned_ids, tag_labels, gen_labels, attn = build_batch_labels(
             clean_ids, attn, prompt_lens, corruptor, scheme, mask_prob, mask_ratio,
             noise_pool, mask_id, pad_id, S, device,
             stutter_prob=stutter_prob,
@@ -355,6 +357,10 @@ def evaluate(
         with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
             dp1 = embedder.embed_ids(noisy_ids, attn)
             dp2 = embedder.embed_ids(clean_aligned_ids, attn).detach()
+            # Apply continuous Interpolated Collapse Drift on DELETE positions
+            del_mask = (tag_labels == DELETE)
+            if del_mask.any():
+                dp2 = apply_collapse_drift(dp2, del_mask, attn)
             cond = tag_labels.clamp(0, 5) if mcfg.get("edit_conditioned_score", False) else None
             if scheme == "full":
                 loss, loss_dict = hybrid.loss_edit(dp1, dp2, tag_labels, gen_labels,
@@ -482,7 +488,13 @@ def train(args, config):
         prediction_target=config["dsb"].get("prediction_target", "u"),
     ).to(device)
     embed_weight = embedder.encoder.get_input_embeddings().weight
-    lm_head = getattr(embedder, "lm_head", None)
+    subspace_enabled = bool(mcfg.get("subspace_factorization", False))
+    macro_dim = int(mcfg.get("macro_dim", 512))
+    lexical_dim = int(mcfg.get("lexical_dim", 256))
+    lex_weight = float(mcfg.get("lexical_loss_weight", 1.5))
+    ang_margin = float(mcfg.get("angular_margin", 0.05))
+    m_scale = float(mcfg.get("margin_scale", 64.0))
+
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
         lambda_sm=config["training"].get("lambda_sm", 20.0),
@@ -493,7 +505,13 @@ def train(args, config):
         time_embed_dim=mcfg.get("time_embed_dim", 128),
         embed_weight=embed_weight,
         tie_weights=mcfg.get("tie_weights", True),
-        lm_head=lm_head,
+        lm_head=getattr(embedder, "lm_head", None),
+        subspace_factorization=subspace_enabled,
+        macro_dim=macro_dim,
+        lexical_dim=lexical_dim,
+        lexical_loss_weight=lex_weight,
+        angular_margin=ang_margin,
+        margin_scale=m_scale,
     ).to(device)
 
     score_params = [p for p in score_net.parameters() if p.requires_grad]
@@ -505,6 +523,8 @@ def train(args, config):
     print(f"Trainable parameters: {n_params:,} (score: {sum(p.numel() for p in score_params):,}, heads: {sum(p.numel() for p in head_params):,})")
 
     tcfg = config["training"]
+    if getattr(args, "max_steps", None) is not None:
+        tcfg["max_steps"] = args.max_steps
     # How often the expensive interpretability diagnostics (baseline/signal/
     # reconstruction) run — every `diag_every` steps, not every log step,
     # because reconstruction_error runs a full reverse SDE and is costly.
@@ -598,7 +618,7 @@ def train(args, config):
                                                                                tokenizer.pad_token_id)
             clean_ids = clean_ids_cpu.to(device)
             attn = attn_cpu.to(device)
-            noisy_ids, clean_aligned_ids, tag_labels, gen_labels = build_batch_labels(
+            noisy_ids, clean_aligned_ids, tag_labels, gen_labels, attn = build_batch_labels(
                 clean_ids, attn, prompt_lens, corruptor, scheme, mask_prob, mask_ratio,
                 noise_pool, mask_id, pad_id, S, device,
                 stutter_prob=stutter_prob,
@@ -623,6 +643,10 @@ def train(args, config):
             with torch.amp.autocast(device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
                 dp1 = embedder.embed_ids(noisy_ids, attn)
                 dp2 = embedder.embed_ids(clean_aligned_ids, attn).detach()
+                # Apply continuous Interpolated Collapse Drift on DELETE positions
+                del_mask = (tag_labels == DELETE)
+                if del_mask.any():
+                    dp2 = apply_collapse_drift(dp2, del_mask, attn)
                 # Condition the score on ground-truth tags when using the
                 # edit-conditioned score net (phase 2).
                 cond = tag_labels.clamp(0, 5) if mcfg.get("edit_conditioned_score", False) else None
@@ -656,8 +680,12 @@ def train(args, config):
 
             if global_step % tcfg["log_every"] == 0:
                 rout_str = f" rout {loss_dict['router']:.3f}" if loss_dict.get("router", 0.0) > 0 else ""
+                if "sm_macro" in loss_dict and "sm_lex" in loss_dict:
+                    sm_str = f"sm {loss_dict['score_matching']:.3f} (m {loss_dict['sm_macro']:.3f}/l {loss_dict['sm_lex']:.3f})"
+                else:
+                    sm_str = f"sm {loss_dict['score_matching']:.3f}"
                 print(f"step {global_step}/{total}  total {loss.item():.4f}  "
-                      f"[sm {loss_dict['score_matching']:.3f}{rout_str} tag {loss_dict['tag']:.3f} "
+                      f"[{sm_str}{rout_str} tag {loss_dict['tag']:.3f} "
                       f"gen {loss_dict['gen']:.3f}]  lr {scheduler.get_last_lr()[0]:.2e}")
 
                 # Expensive interpretability diagnostics (baseline / signal /
@@ -757,6 +785,8 @@ def parse_args():
     parser.add_argument("--save_dir", default="./checkpoints_dsb_hybrid")
     parser.add_argument("--resume", default=None,
                         help="Path to a resume.pt checkpoint to continue from")
+    parser.add_argument("--max_steps", default=None, type=int,
+                        help="Override training.max_steps from config")
     return parser.parse_args()
 
 
