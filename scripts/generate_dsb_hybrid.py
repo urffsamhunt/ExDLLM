@@ -243,10 +243,14 @@ def main():
     parser = argparse.ArgumentParser(description="Generate text from a DSB checkpoint")
     parser.add_argument("--checkpoint", required=True, help="DSB or DSBHybrid checkpoint (.pt)")
     parser.add_argument("--prompt", default="the quick brown fox", help="input text (DP1)")
-    parser.add_argument("--sde_steps", type=int, default=100, help="reverse-SDE steps")
+    parser.add_argument("--sde_steps", type=int, default=0,
+                        help="reverse-SDE/ODE steps (default: 0 for direct discrete edit refinement from prompt; set >0 for continuous bridge transport)")
+    parser.add_argument("--noise_scale", type=float, default=0.0,
+                        help="SDE noise scale during bridge sampling: 0.0 = deterministic ODE (recommended), 1.0 = stochastic Brownian SDE")
     parser.add_argument("--max_iterations", type=int, default=8, help="edit refine iters (hybrid only)")
     parser.add_argument("--max_len", type=int, default=None, help="decode growth cap (hybrid only)")
-    parser.add_argument("--temperature", type=float, default=0.3, help="Sampling temperature (use <=1e-4 for mode-locking argmax, 0.2-0.5 for sharp decoding)")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="Sampling temperature (0.0 or <=1e-4 for mode-locking argmax, 0.2-0.5 for sharp decoding)")
     parser.add_argument("--top_k", type=int, default=5, help="Top-K candidate filter (tight K=5 prevents co-hyponym drift)")
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--distance_threshold", type=float, default=None,
@@ -376,7 +380,10 @@ def main():
             print(f"Corrupted canvas: {shown!r}")
 
         t_infer_start = time.perf_counter()
-        x = hybrid.bridge.sample(dp1, steps=args.sde_steps)
+        if args.sde_steps > 0:
+            x = hybrid.bridge.sample(dp1, steps=args.sde_steps, noise_scale=args.noise_scale)
+        else:
+            x = dp1
         t_sde = time.perf_counter()
         with torch.no_grad():
             texts = hybrid.generate_text(
@@ -393,6 +400,7 @@ def main():
                 fluency_threshold=args.fluency_threshold,
                 refine_cond_mode=args.refine_cond,
                 distance_threshold=args.distance_threshold,
+                t_eval=(1.0 if args.sde_steps > 0 else 0.0),
             )
         t_decode = time.perf_counter()
         print("Generated Output:")

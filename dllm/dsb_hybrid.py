@@ -1595,6 +1595,7 @@ class DSBHybrid(nn.Module):
         fluency_threshold: float = 0.0,       # Rolling n-gram / MLM fluency gate: minimum likelihood to allow KEEP (e.g. 0.05)
         refine_cond_mode: str = "self",       # "self" (legacy self-conditioning, default) or "initial" (anchor to initial DP1 via smooth interp)
         distance_threshold: Optional[float] = None,  # Distance-gated candidate selection threshold (e.g. 0.25 min cosine)
+        t_eval: float = 0.0,                  # Evaluation time level for tagger and generator (0.0 = static/encoder time, 1.0 = terminal SDE state)
     ) -> List[str]:
         """
         True variable-length iterative refinement decode (DLLM-style, ported).
@@ -1652,11 +1653,8 @@ class DSBHybrid(nn.Module):
             for b in range(B):
                 emb = cur[b].unsqueeze(0)                 # (1, L, D)
                 L = emb.shape[1]
-                # Heads are evaluated at t=1 (the SDE output state) against the
-                # source DP1, so "REPLACE" means "this position still differs
-                # from the source". DP1 is synchronized to the current canvas length
-                # across refinement rounds to avoid off-by-one phase shifts.
-                t_row = torch.ones(1, device=emb.device)
+                # Evaluate heads at t_eval (0.0 for static encoder embeddings; 1.0 when reading SDE terminal states)
+                t_row = torch.full((1,), t_eval, device=emb.device)
                 c_row = None
                 if dp1_cur is not None:
                     c = dp1_cur[b:b+1]
@@ -1779,6 +1777,20 @@ class DSBHybrid(nn.Module):
                     for sp_id in (bos, eos, pad, M):
                         if sp_id is not None and sp_id < gen_logits.shape[-1]:
                             gen_logits[:, sp_id] = -1e9
+
+                    # Prevent self-replacement loops and spurious delimiter collapse on REPLACE slots:
+                    # 1. A token tagged REPLACE must never replace itself with the same token.
+                    # 2. When replacing a content token (non-punctuation), suppress lone dash/delimiter tokens (e.g. 46 '–', 20 '-').
+                    punc_tokens = {46, 20, 1104}  # en-dash, hyphen, em-dash
+                    for i_sel, pos in enumerate(gen_positions):
+                        tg = tags[pos]
+                        cur_t = canvases[b][pos]
+                        if tg == REPLACE and cur_t < gen_logits.shape[-1]:
+                            gen_logits[i_sel, cur_t] = -1e9
+                            if cur_t not in punc_tokens and cur_t not in special:
+                                for p_id in punc_tokens:
+                                    if p_id < gen_logits.shape[-1]:
+                                        gen_logits[i_sel, p_id] = -1e9
 
                     # Pass currently committed non-special canvas tokens as context
                     # for repetition penalty so the generator avoids repeating them.

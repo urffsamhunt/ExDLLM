@@ -555,6 +555,7 @@ class DiffSchrodingerBridge(nn.Module):
         return_trajectory: bool = False,
         attention_mask: Optional[torch.Tensor] = None,
         return_clean: bool = True,
+        noise_scale: float = 1.0,
     ) -> torch.Tensor:
         """
         Generate DP2 from DP1 by stepping the bridge FORWARD in time.
@@ -565,9 +566,12 @@ class DiffSchrodingerBridge(nn.Module):
             alpha_{k->k+1} = alpha_{k+1} / alpha_k
             sigma^2_{k->k+1} = max(0, sigma^2_{k+1} - (alpha_{k->k+1})^2 * sigma^2_k)
 
-        This provides exact, stable forward integration from DP1 (t=0) to DP2 (t=1)
-        without Euler discretization under-integration or noise explosion.
+        Setting noise_scale=0.0 runs the deterministic Probability Flow ODE without
+        Brownian perturbation. Setting steps=0 returns dp1 directly.
         """
+        if steps is not None and steps <= 0:
+            return dp1.clone()
+
         steps = steps or self.num_steps
         t_grid = torch.linspace(0.0, 1.0, steps + 1, device=dp1.device)
         x = dp1.clone()
@@ -594,7 +598,7 @@ class DiffSchrodingerBridge(nn.Module):
             var_step_b = var_step.view(1, 1, 1) if is_3d else var_step.view(1, 1)
 
             t_vec = torch.full((B,), t_k.item(), device=dp1.device)
-            noise_scale = 1.0
+            cur_noise_scale = noise_scale
             if getattr(self.score_net, "gated_drift", False) and isinstance(self.score_net, TransformerScoreNet):
                 dp2_est, r_logits = self.score_predict(
                     x, t_vec, dp1=dp1, attention_mask=attention_mask, return_routing=True
@@ -602,13 +606,16 @@ class DiffSchrodingerBridge(nn.Module):
                 if r_logits is not None:
                     p_keep = F.softmax(r_logits, dim=-1)[..., 0:1]
                     gate = 1.0 - p_keep
-                    noise_scale = torch.sqrt(gate.clamp(min=0.05))
+                    cur_noise_scale = noise_scale * torch.sqrt(gate.clamp(min=0.05))
             else:
                 dp2_est = self._estimate_target(x, t_vec, dp1, attention_mask=attention_mask)
 
             x_mean = (1.0 - a_step_b) * dp2_est + a_step_b * x
-            noise = torch.randn_like(x)
-            x = x_mean + torch.sqrt(var_step_b + 1e-8) * (noise * noise_scale)
+            if noise_scale > 0.0:
+                noise = torch.randn_like(x)
+                x = x_mean + torch.sqrt(var_step_b + 1e-8) * (noise * cur_noise_scale)
+            else:
+                x = x_mean
 
             if return_trajectory:
                 traj.append(x.clone())
