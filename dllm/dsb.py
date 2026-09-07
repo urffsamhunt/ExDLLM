@@ -207,15 +207,7 @@ class TransformerScoreNet(nn.Module):
         t_emb = t_emb.unsqueeze(1).expand(-1, h_in.shape[1], -1)
         h = self.in_proj(torch.cat([h_in, t_emb], dim=-1))
         pad_mask = (attention_mask == 0) if (attention_mask is not None and not squeeze) else None
-        was_training = self.encoder.training
-        if not was_training:
-            self.encoder.train(True)
-            try:
-                h = self.encoder(h, src_key_padding_mask=pad_mask)
-            finally:
-                self.encoder.train(was_training)
-        else:
-            h = self.encoder(h, src_key_padding_mask=pad_mask)
+        h = self.encoder(h, src_key_padding_mask=pad_mask)
         raw_out = self.out_proj(h)
 
         routing_logits = None
@@ -226,8 +218,11 @@ class TransformerScoreNet(nn.Module):
                 # Class 0 corresponds to KEEP / [DO_NOTHING]
                 p_keep = F.softmax(routing_logits, dim=-1)[..., 0:1]
                 gate = 1.0 - p_keep
+                # Detach gate from drift blend during training to prevent the shortcut trap
+                # where score matching MSE rewards the router for predicting KEEP (p_keep -> 1)
+                gate_blend = gate.detach() if self.training else gate
                 c_target = cond if not squeeze else cond
-                out = gate * raw_out + (1.0 - gate) * c_target
+                out = gate_blend * raw_out + (1.0 - gate_blend) * c_target
 
         out_ret = out.squeeze(1) if squeeze else out
         if return_routing:
@@ -620,5 +615,15 @@ class DiffSchrodingerBridge(nn.Module):
 
         if return_trajectory:
             return torch.stack(traj)
-        # Return clean target estimate at t=1 (eliminating terminal residual noise from x_49)
-        return dp2_est if return_clean else x
+        # Return clean target estimate at t=1 on the final integrated point x
+        # (eliminating step-49 discretization lag and residual Euler noise).
+        if return_clean:
+            t_final = torch.ones(B, device=dp1.device)
+            if getattr(self.score_net, "gated_drift", False) and isinstance(self.score_net, TransformerScoreNet):
+                clean_target, _ = self.score_predict(
+                    x, t_final, dp1=dp1, attention_mask=attention_mask, return_routing=True
+                )
+            else:
+                clean_target = self._estimate_target(x, t_final, dp1, attention_mask=attention_mask)
+            return clean_target
+        return x

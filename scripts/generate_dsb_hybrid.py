@@ -246,9 +246,11 @@ def main():
     parser.add_argument("--sde_steps", type=int, default=100, help="reverse-SDE steps")
     parser.add_argument("--max_iterations", type=int, default=8, help="edit refine iters (hybrid only)")
     parser.add_argument("--max_len", type=int, default=None, help="decode growth cap (hybrid only)")
-    parser.add_argument("--temperature", type=float, default=1.0)
-    parser.add_argument("--top_k", type=int, default=50)
+    parser.add_argument("--temperature", type=float, default=0.3, help="Sampling temperature (use <=1e-4 for mode-locking argmax, 0.2-0.5 for sharp decoding)")
+    parser.add_argument("--top_k", type=int, default=5, help="Top-K candidate filter (tight K=5 prevents co-hyponym drift)")
     parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--distance_threshold", type=float, default=None,
+                        help="Distance-gated candidate selection: minimum cosine similarity to continuous SDE state (e.g. 0.25)")
     parser.add_argument("--corpus", default=None, help="corpus file for nearest-neighbor decode (plain DSB)")
     parser.add_argument("--corrupt", action="store_true",
                         help="hybrid only: corrupt the prompt first (the model is a denoiser)")
@@ -390,6 +392,7 @@ def main():
                 keep_threshold=args.keep_threshold,
                 fluency_threshold=args.fluency_threshold,
                 refine_cond_mode=args.refine_cond,
+                distance_threshold=args.distance_threshold,
             )
         t_decode = time.perf_counter()
         print("Generated Output:")

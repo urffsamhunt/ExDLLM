@@ -454,7 +454,7 @@ def corrupt_multiroute(
                 noisy.append(clean_tok)
                 clean_aligned.append(clean_tok)
                 tags.append(INSERT)
-                gen.append(-100)
+                gen.append(p.get("omitted_tok", -100))
                 i += 1
                 continue
 
@@ -463,7 +463,7 @@ def corrupt_multiroute(
                 noisy.append(expand_id if expand_id is not None else mask_id)
                 clean_aligned.append(clean_tok)
                 tags.append(EXPAND)
-                gen.append(-100)
+                gen.append(clean_tok)
                 i += 1
                 continue
 
@@ -548,11 +548,11 @@ def corrupt_multiroute(
 
         elif roll < mask_prob * mask_ratio + replace_ratio + delete_ratio + insert_ratio and (i + 1) < n_tokens:
             next_tok = clean_ids[i + 1]
-            # Omit clean_tok, tag next_tok as INSERT (structural edit op)
+            # Omit clean_tok, tag next_tok as INSERT (structural edit op) with target = omitted clean_tok
             noisy.append(next_tok)
             clean_aligned.append(next_tok)
             tags.append(INSERT)
-            gen.append(-100)
+            gen.append(clean_tok)
             i += 2  # Consumed both i and i+1
             continue
 
@@ -821,24 +821,18 @@ class GenHead(nn.Module):
             x_lex = x[:, self.macro_dim:]
             feat = feat + self.lex_proj(x_lex)
 
-        # Projection to vocabulary logits:
-        if self.subspace_factorization and self.angular_margin > 0:
-            norm_feat = F.normalize(feat, dim=-1)
-            norm_w = F.normalize(self.net[3].weight, dim=-1)
-            cosine = F.linear(norm_feat, norm_w)  # (N, V)
+        # Projection to vocabulary logits (preserves calibrated pretrained LM head decoder weights):
+        logits = self.net[3](feat)
 
-            if self.training and targets is not None:
-                # CosFace Additive Angular Margin penalty on ground truth targets
-                one_hot = torch.zeros_like(cosine)
-                one_hot.scatter_(1, targets.view(-1, 1), 1.0)
-                cosine = cosine - one_hot * self.angular_margin
+        # Angular/Lexical Margin: Additive penalty on ground truth target during training
+        # separates true target from co-hyponyms in the macro blob without destroying weight norms
+        if self.subspace_factorization and self.angular_margin > 0 and self.training and targets is not None:
+            margin_penalty = float(self.angular_margin * self.margin_scale)
+            one_hot = torch.zeros_like(logits)
+            one_hot.scatter_(1, targets.view(-1, 1), 1.0)
+            logits = logits - one_hot * margin_penalty
 
-            logits = self.margin_scale * cosine
-            if self.net[3].bias is not None:
-                logits = logits + self.net[3].bias
-            return logits
-        else:
-            return self.net[3](feat)
+        return logits
 
 
 # ── The hybrid model ─────────────────────────────────────────────────────────
@@ -1158,6 +1152,15 @@ class DSBHybrid(nn.Module):
             rep_recon = recon
             rep_ident = ident
 
+        # Denoising performance across ALL non-KEEP corrupted slots (REPLACE, DELETE, INSERT, EXPAND):
+        corr_mask_sde = (tag_e != KEEP) & (tag_e != -100) & (attn_e == 1) if attn_e is not None else ((tag_e != KEEP) & (tag_e != -100))
+        if corr_mask_sde.any():
+            corr_recon = torch.norm(sampled_x[corr_mask_sde] - dp2_e[corr_mask_sde], dim=-1).mean().item()
+            corr_ident = torch.norm(dp2_e[corr_mask_sde] - dp1_e[corr_mask_sde], dim=-1).mean().item()
+        else:
+            corr_recon = rep_recon
+            corr_ident = rep_ident
+
         cos_sim = F.cosine_similarity(
             sampled_x.reshape(-1, sampled_x.shape[-1]),
             dp2_e.reshape(-1, dp2_e.shape[-1]),
@@ -1235,6 +1238,8 @@ class DSBHybrid(nn.Module):
             "identity": ident,
             "rep_recon": rep_recon,
             "rep_ident": rep_ident,
+            "corr_recon": corr_recon,
+            "corr_ident": corr_ident,
             "cos_sim": cos_sim,
             "keep_acc": keep_acc * 100.0,
             "rep_f1": f1_rep * 100.0,
@@ -1466,26 +1471,59 @@ class DSBHybrid(nn.Module):
         return results
 
     @staticmethod
-    def _sample_topk(logits: torch.Tensor, temperature: float, top_k: int, top_p: float,
-                     generated_ids: Optional[List[int]] = None, repetition_penalty: float = 1.0) -> List[int]:
-        """Vectorized top-k / top-p sampling over vocab logits -> token ids (per position).
+    def _sample_topk(
+        logits: torch.Tensor,
+        temperature: float,
+        top_k: int,
+        top_p: float,
+        generated_ids: Optional[List[int]] = None,
+        repetition_penalty: float = 1.0,
+        x_states: Optional[torch.Tensor] = None,
+        embed_weight: Optional[torch.Tensor] = None,
+        distance_threshold: Optional[float] = None,
+    ) -> List[int]:
+        """Vectorized distance-gated top-k / top-p sampling over vocab logits -> token ids (per position).
+
+        When distance_threshold is provided with x_states and embed_weight, prunes candidate tokens
+        whose continuous embedding is outside a maximum distance (or below minimum cosine similarity)
+        from the continuous DSB state x_states, bounding the selection within the macro blob.
 
         Args:
+            temperature: <=1e-4 uses greedy argmax (mode-locking). >0 scales probabilities.
             repetition_penalty: >1.0 divides logits of already-generated tokens (HuggingFace convention).
-                                 1.0 = disabled (no penalty). Recommended: 1.2–1.5 for early training.
+            distance_threshold: Optional minimum cosine similarity to continuous SDE state (e.g. 0.25).
         """
         if logits.numel() == 0:
             return []
-        # Move the small (N_replace, 250002) projection to CPU for instantaneous AVX quickselect
-        # rather than triggering a slow 80s Level-Zero JIT compilation stall on Intel XPU.
-        logits = logits.detach().to("cpu", dtype=torch.float32) / max(temperature, 1e-8)
+
+        logits = logits.detach()
+
+        # Distance-gated candidate selection within learned/bounded macro blob around SDE state
+        if distance_threshold is not None and x_states is not None and embed_weight is not None:
+            try:
+                norm_x = F.normalize(x_states.detach().to(logits.device, dtype=torch.float32), dim=-1)
+                norm_w = F.normalize(embed_weight.detach().to(logits.device, dtype=torch.float32), dim=-1)
+                cos_sims = norm_x @ norm_w.T  # (N, V)
+                dist_mask = (cos_sims < distance_threshold)
+                # Safeguard: if ALL tokens fail the threshold, fall back to argmax; otherwise prune strictly
+                all_pruned = dist_mask.all(dim=-1, keepdim=True)
+                dist_mask = dist_mask & ~all_pruned
+                logits = torch.where(dist_mask, torch.full_like(logits, -1e9), logits)
+            except Exception:
+                pass
+
+        if temperature <= 1e-4:
+            # Mode-locking greedy decode: pick highest density mode in candidate pool
+            return logits.argmax(dim=-1).tolist()
+
+        # Move projection to CPU for instantaneous AVX quickselect
+        logits = logits.to("cpu", dtype=torch.float32) / max(temperature, 1e-8)
 
         # Repetition penalty: down-weight tokens that have already been generated in this canvas.
         if repetition_penalty != 1.0 and generated_ids:
             prev = torch.tensor(list(set(generated_ids)), dtype=torch.long)
             prev = prev[prev < logits.shape[-1]]
             if len(prev) > 0:
-                # Positive logits are divided; negative logits are multiplied (HF convention).
                 scores = logits[:, prev]
                 logits[:, prev] = torch.where(scores > 0, scores / repetition_penalty, scores * repetition_penalty)
 
@@ -1556,6 +1594,7 @@ class DSBHybrid(nn.Module):
         keep_threshold: float = 0.0,          # Confidence gate: minimum KEEP probability to allow KEEP (e.g. 0.85); below demotes
         fluency_threshold: float = 0.0,       # Rolling n-gram / MLM fluency gate: minimum likelihood to allow KEEP (e.g. 0.05)
         refine_cond_mode: str = "self",       # "self" (legacy self-conditioning, default) or "initial" (anchor to initial DP1 via smooth interp)
+        distance_threshold: Optional[float] = None,  # Distance-gated candidate selection threshold (e.g. 0.25 min cosine)
     ) -> List[str]:
         """
         True variable-length iterative refinement decode (DLLM-style, ported).
@@ -1744,10 +1783,16 @@ class DSBHybrid(nn.Module):
                     # Pass currently committed non-special canvas tokens as context
                     # for repetition penalty so the generator avoids repeating them.
                     committed = [t for t in canvases[b] if t not in special]
+                    w_proj = embed_weight if embed_weight is not None else self.embed_weight
+                    if w_proj is None and hasattr(self.generator, "net") and len(self.generator.net) > 3:
+                        w_proj = getattr(self.generator.net[3], "weight", None)
                     sampled_tokens = self._sample_topk(
                         gen_logits, temperature, top_k, top_p,
                         generated_ids=committed,
                         repetition_penalty=repetition_penalty,
+                        x_states=cur_sel,
+                        embed_weight=w_proj,
+                        distance_threshold=distance_threshold,
                     )
                     for pos, tok_id in zip(gen_positions, sampled_tokens):
                         if pos < len(gen_toks):

@@ -700,9 +700,13 @@ def train(args, config):
                             lm_head_fn=embedder.decode_logits if hasattr(embedder, "decode_logits") else None,
                             attention_mask=attn,
                         )
+                    ident_ratio = diag['recon_err'] / max(diag['identity'], 1e-6)
+                    rep_ratio = diag.get('rep_recon', 0.0) / max(diag.get('rep_ident', 1.0), 1e-6)
+                    corr_ratio = diag.get('corr_recon', 0.0) / max(diag.get('corr_ident', 1.0), 1e-6)
                     print(f"  [diag] SDE: signal {diag['signal']:.1f}%, cos_sim {diag['cos_sim']:.3f}, "
-                          f"recon_err {diag['recon_err']:.4f} (ident {diag['identity']:.4f}) | "
-                          f"rep_recon {diag.get('rep_recon', 0.0):.4f} (rep_ident {diag.get('rep_ident', 0.0):.4f})")
+                          f"recon_err {diag['recon_err']:.4f} vs ident {diag['identity']:.4f} ({ident_ratio:.2f}x) | "
+                          f"rep_recon {diag.get('rep_recon', 0.0):.4f} vs rep_ident {diag.get('rep_ident', 0.0):.4f} ({rep_ratio:.2f}x) | "
+                          f"corr_recon {diag.get('corr_recon', 0.0):.4f} vs corr_ident {diag.get('corr_ident', 0.0):.4f} ({corr_ratio:.2f}x)")
                     print(f"  [diag] Heads: Top-1 Acc {diag['top1_acc']:.1f}%, Top-5 Acc {diag['top5_acc']:.1f}%, "
                           f"Keep-Acc {diag['keep_acc']:.1f}%, Rep-F1 {diag['rep_f1']:.1f}% (prec {diag['rep_prec']:.1f}%, rec {diag['rep_rec']:.1f}%), "
                           f"Del-Rec {diag.get('del_rec', 0.0):.1f}%, Ins-Rec {diag.get('ins_rec', 0.0):.1f}%, Exp-Rec {diag.get('exp_rec', 0.0):.1f}%")
