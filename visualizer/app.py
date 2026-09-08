@@ -38,12 +38,12 @@ class DSBInferenceWrapper:
         self.device = device
 
     def generate(self, prompt, max_iterations=8, target_length=None,
-                 temperature=1.0, top_k=50, top_p=0.9, return_trajectory=True):
+                 temperature=0.0, top_k=5, top_p=0.9, return_trajectory=True):
         prompt_str = prompt
-        if "<mask_id>" in prompt_str and self.tokenizer.mask_token:
-            prompt_str = prompt_str.replace("<mask_id>", self.tokenizer.mask_token)
-        elif "<mask_id>" in prompt_str and self.tokenizer.mask_token:
-            prompt_str = prompt_str.replace("<mask_id>", self.tokenizer.mask_token)
+        if self.tokenizer.mask_token:
+            for alias in ("<mask_id>", "[MASK]", "<mask_1>", "<mask_0>", "<mask_2>"):
+                if alias in prompt_str:
+                    prompt_str = prompt_str.replace(alias, self.tokenizer.mask_token)
 
         prompt_ids = self.tokenizer.encode(prompt_str, add_special_tokens=True)
         seed_tensor = torch.tensor([prompt_ids], device=self.device)
@@ -60,6 +60,7 @@ class DSBInferenceWrapper:
             temperature=temperature,
             top_k=top_k,
             top_p=top_p,
+            t_eval=0.0,
             return_trajectory=True,
         )
 
@@ -189,8 +190,10 @@ def generate():
     prompt        = data.get("prompt", "").strip()
     max_iterations = int(data.get("max_iterations", _config["inference"]["max_iterations"]))
     target_length  = data.get("target_length", None)
-    temperature    = float(data.get("temperature", 1.0))
-    top_k          = int(data.get("top_k", 50))
+    default_temp = 0.0 if isinstance(_inference, DSBInferenceWrapper) else 1.0
+    default_topk = 5 if isinstance(_inference, DSBInferenceWrapper) else 50
+    temperature    = float(data.get("temperature", default_temp))
+    top_k          = int(data.get("top_k", default_topk))
     top_p          = float(data.get("top_p", 0.9))
     seed           = int(data.get("seed", 42))
 

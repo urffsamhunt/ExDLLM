@@ -178,6 +178,11 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
     op_embed_dim = int(mcfg.get("op_embed_dim", 0))
     if state_dict is not None and "generator.op_emb.weight" in state_dict:
         op_embed_dim = state_dict["generator.op_emb.weight"].shape[1]
+    blob_diffusion = bool(mcfg.get("blob_diffusion", True))
+    blob_size = int(mcfg.get("blob_size", 512))
+    contextual_gen = bool(mcfg.get("contextual_gen", True))
+    if state_dict is not None and "generator.ctx_proj.weight" in state_dict:
+        contextual_gen = True
     lm_head = getattr(embedder, "lm_head", None)
 
     hybrid = DSBHybrid(
@@ -197,6 +202,9 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
         angular_margin=ang_margin,
         margin_scale=m_scale,
         op_embed_dim=op_embed_dim,
+        blob_diffusion=blob_diffusion,
+        blob_size=blob_size,
+        contextual_gen=contextual_gen,
     ).to(device)
     return embedder, hybrid, tokenizer
 
@@ -291,6 +299,10 @@ def main():
                         help="Local context window radius for repetition penalty (default: 5; 0 to disable windowing / use full canvas)")
     parser.add_argument("--exempt_stopwords", action=argparse.BooleanOptionalAction, default=True,
                         help="Exempt common syntax and functional stopwords from repetition penalty (default: True)")
+    parser.add_argument("--blob_diffusion", action=argparse.BooleanOptionalAction, default=True,
+                        help="Restrict token predictions to localized continuous SDE blob (default: True)")
+    parser.add_argument("--blob_size", type=int, default=None,
+                        help="Candidate blob size for BRCD (default: from checkpoint/config or 512)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -417,6 +429,8 @@ def main():
                 progressive_fill=args.progressive_fill,
                 repetition_window=(args.repetition_window if args.repetition_window > 0 else None),
                 exempt_stopwords=args.exempt_stopwords,
+                blob_diffusion=args.blob_diffusion,
+                blob_size=args.blob_size,
             )
         t_decode = time.perf_counter()
         print("Generated Output:")

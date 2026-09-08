@@ -495,6 +495,9 @@ def train(args, config):
     ang_margin = float(mcfg.get("angular_margin", 0.05))
     m_scale = float(mcfg.get("margin_scale", 64.0))
     op_embed_dim = int(mcfg.get("op_embed_dim", 0))
+    blob_diffusion = bool(getattr(args, "blob_diffusion", None) if getattr(args, "blob_diffusion", None) is not None else mcfg.get("blob_diffusion", True))
+    blob_size = int(getattr(args, "blob_size", None) if getattr(args, "blob_size", None) is not None else mcfg.get("blob_size", 512))
+    contextual_gen = bool(mcfg.get("contextual_gen", True))
 
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
@@ -514,6 +517,9 @@ def train(args, config):
         angular_margin=ang_margin,
         margin_scale=m_scale,
         op_embed_dim=op_embed_dim,
+        blob_diffusion=blob_diffusion,
+        blob_size=blob_size,
+        contextual_gen=contextual_gen,
     ).to(device)
 
     score_params = [p for p in score_net.parameters() if p.requires_grad]
@@ -682,13 +688,14 @@ def train(args, config):
 
             if global_step % tcfg["log_every"] == 0:
                 rout_str = f" rout {loss_dict['router']:.3f}" if loss_dict.get("router", 0.0) > 0 else ""
+                blob_str = f" blob_hit {loss_dict['blob_hit']:.1f}% blob_acc {loss_dict['blob_acc']:.1f}%" if "blob_hit" in loss_dict else ""
                 if "sm_macro" in loss_dict and "sm_lex" in loss_dict:
                     sm_str = f"sm {loss_dict['score_matching']:.3f} (m {loss_dict['sm_macro']:.3f}/l {loss_dict['sm_lex']:.3f})"
                 else:
                     sm_str = f"sm {loss_dict['score_matching']:.3f}"
                 print(f"step {global_step}/{total}  total {loss.item():.4f}  "
                       f"[{sm_str}{rout_str} tag {loss_dict['tag']:.3f} "
-                      f"gen {loss_dict['gen']:.3f}]  lr {scheduler.get_last_lr()[0]:.2e}")
+                      f"gen {loss_dict['gen']:.3f}{blob_str}]  lr {scheduler.get_last_lr()[0]:.2e}")
 
                 # Expensive interpretability diagnostics (baseline / signal /
                 # full reverse-SDE reconstruction + discrete head accuracy) — run every `diag_every`
@@ -709,9 +716,10 @@ def train(args, config):
                           f"recon_err {diag['recon_err']:.4f} vs ident {diag['identity']:.4f} ({ident_ratio:.2f}x) | "
                           f"rep_recon {diag.get('rep_recon', 0.0):.4f} vs rep_ident {diag.get('rep_ident', 0.0):.4f} ({rep_ratio:.2f}x) | "
                           f"corr_recon {diag.get('corr_recon', 0.0):.4f} vs corr_ident {diag.get('corr_ident', 0.0):.4f} ({corr_ratio:.2f}x)")
+                    blob_diag = f" | Blob: Hit {diag['blob_hit']:.1f}%, Acc {diag['blob_acc']:.1f}%" if "blob_hit" in diag else ""
                     print(f"  [diag] Heads: Top-1 Acc {diag['top1_acc']:.1f}%, Top-5 Acc {diag['top5_acc']:.1f}%, "
                           f"Keep-Acc {diag['keep_acc']:.1f}%, Rep-F1 {diag['rep_f1']:.1f}% (prec {diag['rep_prec']:.1f}%, rec {diag['rep_rec']:.1f}%), "
-                          f"Del-Rec {diag.get('del_rec', 0.0):.1f}%, Ins-Rec {diag.get('ins_rec', 0.0):.1f}%, Exp-Rec {diag.get('exp_rec', 0.0):.1f}%")
+                          f"Del-Rec {diag.get('del_rec', 0.0):.1f}%, Ins-Rec {diag.get('ins_rec', 0.0):.1f}%, Exp-Rec {diag.get('exp_rec', 0.0):.1f}%{blob_diag}")
                     print(f"  [diag] LM-Head Decode: Top-1 {diag['lm_top1_acc']:.1f}%, Top-5 {diag['lm_top5_acc']:.1f}% | "
                           f"NN Decode: Top-1 {diag['nn_top1_acc']:.1f}%, Top-5 {diag['nn_top5_acc']:.1f}%")
 
@@ -793,6 +801,10 @@ def parse_args():
                         help="Path to a resume.pt checkpoint to continue from")
     parser.add_argument("--max_steps", default=None, type=int,
                         help="Override training.max_steps from config")
+    parser.add_argument("--blob_diffusion", action=argparse.BooleanOptionalAction, default=None,
+                        help="Enable Blob-Restricted Contextual Diffusion (BRCD)")
+    parser.add_argument("--blob_size", type=int, default=None,
+                        help="Candidate blob size for BRCD (default: from config or 512)")
     return parser.parse_args()
 
 

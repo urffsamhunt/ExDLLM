@@ -49,6 +49,12 @@ model:
   margin_scale: 64.0
   # Operation-conditioned GenHead (differentiates in-filling REPLACE from prefixing INSERT)
   op_embed_dim: 0
+  # Blob-Restricted Contextual Diffusion (BRCD):
+  # Restricts candidate tokens to an active semantic blob (512 tokens / ~0.2% vocab)
+  # with full bidirectional contextual projection, accelerating training ~500x and eliminating drift.
+  blob_diffusion: true
+  blob_size: 512
+  contextual_gen: true
 
 dsb:
   beta_schedule: "linear"

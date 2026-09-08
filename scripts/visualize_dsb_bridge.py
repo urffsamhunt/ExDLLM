@@ -178,10 +178,24 @@ def load_hybrid_model(checkpoint_path, device):
         if any("generator.op_emb.weight" in k for k in sd):
             op_embed_dim = sd["generator.op_emb.weight"].shape[1]
 
+        head_time_dim = int(mcfg.get("time_embed_dim", 128)) if mcfg.get("time_embed_dim") is not None else 128
+        condition_heads = bool(mcfg.get("condition_heads", False))
+        if "tagger.net.0.weight" in sd:
+            in_feat = sd["tagger.net.0.weight"].shape[1]
+            has_time = any("tagger.time_mlp" in k for k in sd)
+            if not has_time:
+                head_time_dim = 0
+                condition_heads = (in_feat == 2 * embedder.dim)
+            else:
+                if in_feat == embedder.dim + head_time_dim:
+                    condition_heads = False
+                elif in_feat == 2 * embedder.dim + head_time_dim:
+                    condition_heads = True
+
         hybrid = DSBHybrid(
             bridge=bridge, vocab_size=embedder.tokenizer.vocab_size,
-            condition_heads=bool(mcfg.get("condition_heads", False)),
-            time_embed_dim=mcfg.get("time_embed_dim", 128),
+            condition_heads=condition_heads,
+            time_embed_dim=head_time_dim,
             embed_weight=embed_weight,
             tie_weights=mcfg.get("tie_weights", True),
             lm_head=lm_head,
@@ -570,7 +584,11 @@ def build_static_png(
     out_path="dsb_landscape.png",
 ):
     """Generate high-resolution PNG using matplotlib."""
-    import matplotlib.pyplot as plt
+    try:
+        import matplotlib.pyplot as plt
+    except (ImportError, ModuleNotFoundError):
+        print(f"Notice: Matplotlib not installed; skipping static PNG export to {out_path}.")
+        return
 
     plt.figure(figsize=(13, 9), dpi=200)
     ax = plt.gca()
@@ -688,11 +706,11 @@ def main():
 
     # 4. Prepare Prompt and SDE Bridge Transport (Phase 1)
     prompt_str = args.prompt
-    # Handle mask token formatting for XLM-RoBERTa
-    if "<mask_id>" in prompt_str and tokenizer.mask_token:
-        prompt_str = prompt_str.replace("<mask_id>", tokenizer.mask_token)
-    elif "<mask_id>" in prompt_str and tokenizer.mask_token:
-        prompt_str = prompt_str.replace("<mask_id>", tokenizer.mask_token)
+    # Handle mask token formatting for XLM-RoBERTa / RoBERTa
+    if tokenizer.mask_token:
+        for alias in ("<mask_id>", "[MASK]", "<mask_1>", "<mask_0>", "<mask_2>"):
+            if alias in prompt_str:
+                prompt_str = prompt_str.replace(alias, tokenizer.mask_token)
 
     print(f"\n[Phase 1] Tracing Continuous SDE Bridge Trajectory from prompt: {prompt_str!r}")
     dp1_single = embedder.embed_pool([prompt_str], device)  # (1, D)

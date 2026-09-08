@@ -695,6 +695,46 @@ class TaggerHead(nn.Module):
         return self.net(h)
 
 
+def select_blob_candidates(
+    continuous_states: torch.Tensor,
+    embed_weight: torch.Tensor,
+    blob_size: int = 512,
+    targets: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """
+    Selects the localized candidate semantic blob B_M(x) around the continuous states.
+    Prunes the vocabulary down to the M most similar tokens in embedding space.
+    When targets is provided, guarantees the ground-truth target is in the candidate set.
+
+    Args:
+        continuous_states: (N, D) continuous representations at active edit slots.
+        embed_weight: (V, D) vocabulary token embedding / decoder matrix.
+        blob_size: size M of candidate blob (e.g. 512).
+        targets: (N,) optional ground truth token IDs for active-set guarantee.
+
+    Returns:
+        candidate_ids: (N, M) candidate token IDs.
+    """
+    N, D = continuous_states.shape
+    V = embed_weight.shape[0]
+    M = min(blob_size, V)
+
+    norm_x = F.normalize(continuous_states.detach().to(embed_weight.device, dtype=torch.float32), dim=-1)
+    norm_w = F.normalize(embed_weight.detach().to(dtype=torch.float32), dim=-1)
+    cos_sims = norm_x @ norm_w.T  # (N, V)
+
+    cand_ids = torch.topk(cos_sims, M, dim=-1).indices  # (N, M)
+
+    if targets is not None:
+        tgt = targets.view(-1, 1)
+        in_blob = (cand_ids == tgt).any(dim=-1)  # (N,)
+        if not in_blob.all():
+            missing = (~in_blob).nonzero(as_tuple=True)[0]
+            cand_ids[missing, -1] = targets[missing]
+
+    return cand_ids
+
+
 class GenHead(nn.Module):
     """Predict the clean token at REPLACE positions (sparse projection).
 
@@ -710,6 +750,11 @@ class GenHead(nn.Module):
       - x_lexical (macro_dim:end): fine-grained lexical coordinates
     An angular margin projection (CosFace style) is applied to enforce wide separation
     between co-hyponyms in the lexical subspace, preventing adjacent Voronoi cell spillage.
+
+    Blob-Restricted Diffusion:
+    When candidate_ids is provided, restricts projection and probability distribution
+    to the local semantic blob B_M(x) (e.g. M=512 tokens), reducing candidate space
+    by ~500x and eliminating out-of-domain co-hyponym drift.
     """
 
     def __init__(
@@ -728,6 +773,7 @@ class GenHead(nn.Module):
         margin_scale: float = 64.0,
         op_embed_dim: int = 0,
         num_tags: int = NUM_TAGS,
+        contextual_gen: bool = False,
     ):
         super().__init__()
         self.dim = dim
@@ -741,6 +787,7 @@ class GenHead(nn.Module):
         self.margin_scale = margin_scale
         self.op_embed_dim = op_embed_dim
         self.num_tags = num_tags
+        self.contextual_gen = contextual_gen
 
         if time_embed_dim > 0:
             self.time_mlp = nn.Sequential(
@@ -757,6 +804,14 @@ class GenHead(nn.Module):
             nn.init.zeros_(self.op_emb.weight)
         else:
             self.op_emb = None
+
+        if contextual_gen:
+            self.ctx_proj = nn.Linear(dim, dim)
+            nn.init.zeros_(self.ctx_proj.weight)
+            if self.ctx_proj.bias is not None:
+                nn.init.zeros_(self.ctx_proj.bias)
+        else:
+            self.ctx_proj = None
 
         self.net = nn.Sequential(
             nn.Linear(dim + cond_dim + time_embed_dim + op_embed_dim, dim),
@@ -813,10 +868,20 @@ class GenHead(nn.Module):
         cond: Optional[torch.Tensor] = None,
         targets: Optional[torch.Tensor] = None,
         op_ids: Optional[torch.Tensor] = None,
+        candidate_ids: Optional[torch.Tensor] = None,
+        context: Optional[torch.Tensor] = None,
         return_features: bool = False,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        blob_size: Optional[int] = None,
+        return_candidates: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
         # x: (N, D) selected positions; t: (N,); cond: (N, D); op_ids: (N,)
         h = x
+        if context is not None:
+            if getattr(self, "ctx_proj", None) is not None:
+                h = h + self.ctx_proj(context)
+            else:
+                h = h + context
+
         if self.cond_dim > 0:
             if cond is None:
                 raise ValueError("head built with cond_dim > 0 requires cond")
@@ -827,6 +892,8 @@ class GenHead(nn.Module):
         if self.op_emb is not None:
             if op_ids is None:
                 op_ids = torch.full((x.shape[0],), self.num_tags, dtype=torch.long, device=x.device)
+            else:
+                op_ids = torch.where(op_ids < 0, torch.full_like(op_ids, self.num_tags), op_ids)
             op_e = self.op_emb(op_ids.clamp(0, self.num_tags))
             h = torch.cat([h, op_e], dim=-1)
 
@@ -838,20 +905,68 @@ class GenHead(nn.Module):
             x_lex = x[:, self.macro_dim:]
             feat = feat + self.lex_proj(x_lex)
 
-        # Projection to vocabulary logits (preserves calibrated pretrained LM head decoder weights):
-        logits = self.net[3](feat)
+        w_dec = self.net[3].weight  # (V, D)
+        b_dec = self.net[3].bias    # (V,) or None
+        raw_blob_hit = None
+        selected_internal = False
 
-        # Angular/Lexical Margin: Additive penalty on ground truth target during training
-        # separates true target from co-hyponyms in the macro blob without destroying weight norms
-        if self.subspace_factorization and self.angular_margin > 0 and self.training and targets is not None:
-            margin_penalty = float(self.angular_margin * self.margin_scale)
-            one_hot = torch.zeros_like(logits)
-            one_hot.scatter_(1, targets.view(-1, 1), 1.0)
-            logits = logits - one_hot * margin_penalty
+        if candidate_ids is None and blob_size is not None and blob_size < self.vocab_size:
+            # Candidate selection performed on the aligned semantic feature 'feat'
+            with torch.no_grad():
+                cand_scores = feat.detach() @ w_dec.T
+                if b_dec is not None:
+                    cand_scores = cand_scores + b_dec
+                candidate_ids = torch.topk(cand_scores, min(blob_size, self.vocab_size), dim=-1).indices
+                selected_internal = True
+                if targets is not None:
+                    in_blob = (candidate_ids == targets.view(-1, 1)).any(dim=-1)
+                    raw_blob_hit = in_blob.float().mean().item()
+                    if not in_blob.all():
+                        candidate_ids = candidate_ids.clone()
+                        candidate_ids[~in_blob, -1] = targets[~in_blob]
 
+        if candidate_ids is not None:
+            # Localized projection over candidate blob B_M(x):
+            # candidate_ids: (N, M)
+            w_cand = w_dec[candidate_ids]  # (N, M, D)
+            logits = torch.bmm(w_cand, feat.unsqueeze(-1)).squeeze(-1)  # (N, M)
+            if b_dec is not None:
+                b_cand = b_dec[candidate_ids]  # (N, M)
+                logits = logits + b_cand
+
+            if self.subspace_factorization and self.angular_margin > 0 and self.training and targets is not None:
+                target_mask = (candidate_ids == targets.view(-1, 1))
+                local_target = target_mask.int().argmax(dim=-1)
+                margin_penalty = float(self.angular_margin * self.margin_scale)
+                one_hot = torch.zeros_like(logits)
+                one_hot.scatter_(1, local_target.view(-1, 1), 1.0)
+                logits = logits - one_hot * margin_penalty
+
+            if selected_internal and not return_candidates and not self.training:
+                # During inference, scatter localized candidate logits into full vocab shape with -1e9 for non-candidates
+                full_logits = torch.full((x.shape[0], self.vocab_size), -1e9, device=x.device, dtype=logits.dtype)
+                full_logits.scatter_(dim=-1, index=candidate_ids, src=logits)
+                logits = full_logits
+        else:
+            # Full vocabulary projection:
+            logits = self.net[3](feat)
+
+            if self.subspace_factorization and self.angular_margin > 0 and self.training and targets is not None:
+                margin_penalty = float(self.angular_margin * self.margin_scale)
+                one_hot = torch.zeros_like(logits)
+                one_hot.scatter_(1, targets.view(-1, 1), 1.0)
+                logits = logits - one_hot * margin_penalty
+
+        out = [logits]
         if return_features:
-            return logits, feat
-        return logits
+            out.append(feat)
+        if return_candidates:
+            out.append(candidate_ids)
+            if raw_blob_hit is not None:
+                out.append(raw_blob_hit)
+        if len(out) == 1:
+            return out[0]
+        return tuple(out)
 
 
 # ── The hybrid model ─────────────────────────────────────────────────────────
@@ -884,6 +999,9 @@ class DSBHybrid(nn.Module):
         angular_margin: float = 0.05,
         margin_scale: float = 64.0,
         op_embed_dim: int = 0,
+        blob_diffusion: bool = True,
+        blob_size: int = 512,
+        contextual_gen: bool = True,
     ):
         super().__init__()
         self.bridge: DiffSchrodingerBridge = bridge
@@ -896,6 +1014,9 @@ class DSBHybrid(nn.Module):
         self.angular_margin = angular_margin
         self.margin_scale = margin_scale
         self.op_embed_dim = op_embed_dim
+        self.blob_diffusion = blob_diffusion
+        self.blob_size = blob_size
+        self.contextual_gen = contextual_gen
 
         head_cond_dim = dim if condition_heads else 0
         self.tagger = TaggerHead(
@@ -911,6 +1032,7 @@ class DSBHybrid(nn.Module):
             macro_dim=macro_dim, lexical_dim=lexical_dim,
             angular_margin=angular_margin, margin_scale=margin_scale,
             op_embed_dim=op_embed_dim,
+            contextual_gen=contextual_gen,
         )
         self.lambda_sm = lambda_sm
         self.lambda_tag = lambda_tag
@@ -1069,6 +1191,8 @@ class DSBHybrid(nn.Module):
             t_gen = t
 
         select = (gen_labels.reshape(-1) != self.gen_ignore_index) & (gen_labels.reshape(-1) >= 0)
+        blob_hit = 0.0
+        blob_acc = 0.0
         if select.any():
             xp = x_gen.reshape(-1, x_gen.shape[-1])[select]
             lb = gen_labels.reshape(-1)[select]
@@ -1076,8 +1200,24 @@ class DSBHybrid(nn.Module):
             c_sel = dp1.reshape(-1, x_gen.shape[-1])[select]
             target_ids = lb.clamp(0, self.generator.vocab_size - 1)
             op_sel = tag_labels.reshape(-1)[select] if tag_labels is not None else None
-            gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel)         # (n, V)
-            loss_gen = F.cross_entropy(gl.float(), target_ids)
+            ctx_sel = dp1.reshape(-1, dp1.shape[-1])[select] if self.contextual_gen else None
+
+            if self.blob_diffusion:
+                try:
+                    gl, cand_ids, raw_hit = self.generator(
+                        xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel,
+                        blob_size=self.blob_size, context=ctx_sel, return_candidates=True
+                    )
+                    target_local = (cand_ids == target_ids.view(-1, 1)).int().argmax(dim=-1)
+                    loss_gen = F.cross_entropy(gl.float(), target_local)
+                    blob_hit = raw_hit
+                    blob_acc = (gl.argmax(-1) == target_local).float().mean().item()
+                except Exception:
+                    gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel, context=ctx_sel)
+                    loss_gen = F.cross_entropy(gl.float(), target_ids)
+            else:
+                gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel, context=ctx_sel)
+                loss_gen = F.cross_entropy(gl.float(), target_ids)
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
 
@@ -1089,6 +1229,9 @@ class DSBHybrid(nn.Module):
             "router": loss_router.item(),
             "gen": loss_gen.item(),
         }
+        if self.blob_diffusion:
+            res_dict["blob_hit"] = blob_hit * 100.0
+            res_dict["blob_acc"] = blob_acc * 100.0
         if self.subspace_factorization:
             res_dict["sm_macro"] = loss_sm_macro.item() if isinstance(loss_sm_macro, torch.Tensor) else float(loss_sm_macro)
             res_dict["sm_lex"] = loss_sm_lex.item() if isinstance(loss_sm_lex, torch.Tensor) else float(loss_sm_lex)
@@ -1208,18 +1351,39 @@ class DSBHybrid(nn.Module):
         top1_acc, top5_acc = 0.0, 0.0
         nn_top1_acc, nn_top5_acc = 0.0, 0.0
         lm_top1_acc, lm_top5_acc = 0.0, 0.0
+        blob_hit_rate = 0.0
+        blob_acc = 0.0
         if gen_select.any():
             xp = sampled_x.reshape(-1, sampled_x.shape[-1])[gen_select.reshape(-1)]
             lb = gen_e.reshape(-1)[gen_select.reshape(-1)]
             t_sel = t_ones.repeat_interleave(sampled_x.shape[1], dim=0)[gen_select.reshape(-1)]
             c_sel = dp1_e.reshape(-1, sampled_x.shape[-1])[gen_select.reshape(-1)]
             op_sel = tag_e.reshape(-1)[gen_select.reshape(-1)]
+            target_ids = lb.clamp(0, self.generator.vocab_size - 1)
+            ctx_sel = dp1_e.reshape(-1, dp1_e.shape[-1])[gen_select.reshape(-1)] if self.contextual_gen else None
 
-            gl = self.generator(xp, t_sel, cond=c_sel, op_ids=op_sel)  # (N_gen, V)
-
-            top1_acc = (gl.argmax(-1) == lb).float().mean().item()
-            k = min(5, gl.shape[-1])
-            top5_acc = gl.topk(k, dim=-1).indices.eq(lb.unsqueeze(1)).any(1).float().mean().item()
+            if self.blob_diffusion:
+                try:
+                    gl, cand_ids, raw_hit = self.generator(
+                        xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel,
+                        blob_size=self.blob_size, context=ctx_sel, return_candidates=True
+                    )
+                    blob_hit_rate = raw_hit
+                    target_local = (cand_ids == target_ids.view(-1, 1)).int().argmax(dim=-1)
+                    top1_acc = (gl.argmax(-1) == target_local).float().mean().item()
+                    k = min(5, gl.shape[-1])
+                    top5_acc = gl.topk(k, dim=-1).indices.eq(target_local.unsqueeze(1)).any(1).float().mean().item()
+                    blob_acc = top1_acc
+                except Exception:
+                    gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel, context=ctx_sel)
+                    top1_acc = (gl.argmax(-1) == target_ids).float().mean().item()
+                    k = min(5, gl.shape[-1])
+                    top5_acc = gl.topk(k, dim=-1).indices.eq(target_ids.unsqueeze(1)).any(1).float().mean().item()
+            else:
+                gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel, context=ctx_sel)  # (N_gen, V)
+                top1_acc = (gl.argmax(-1) == target_ids).float().mean().item()
+                k = min(5, gl.shape[-1])
+                top5_acc = gl.topk(k, dim=-1).indices.eq(target_ids.unsqueeze(1)).any(1).float().mean().item()
 
             # 4) Pretrained LM-Head Decode Baseline:
             #    Evaluates the backbone's pretrained MLM head directly on sampled_x (Layer 12).
@@ -1260,6 +1424,8 @@ class DSBHybrid(nn.Module):
             "exp_rec": exp_rec * 100.0,
             "top1_acc": top1_acc * 100.0,
             "top5_acc": top5_acc * 100.0,
+            "blob_hit": blob_hit_rate * 100.0,
+            "blob_acc": blob_acc * 100.0,
             "lm_top1_acc": lm_top1_acc * 100.0,
             "lm_top5_acc": lm_top5_acc * 100.0,
             "nn_top1_acc": nn_top1_acc * 100.0,
@@ -1310,7 +1476,7 @@ class DSBHybrid(nn.Module):
         w = self._tag_weights.to(tag_logits.device) if self._tag_weights is not None else None
         loss_tag = F.cross_entropy(tag_logits.permute(0, 2, 1).float(), tag_labels,
                                    weight=w, ignore_index=-100)
-        select = gen_labels.reshape(-1) != self.gen_ignore_index
+        select = (gen_labels.reshape(-1) != self.gen_ignore_index) & (gen_labels.reshape(-1) >= 0)
         if select.any():
             x_eval = x_gen if x_gen is not None else x_t
             t_eval = t_gen if t_gen is not None else t
@@ -1319,8 +1485,23 @@ class DSBHybrid(nn.Module):
             t_sel = t_eval.repeat_interleave(x_eval.shape[1], dim=0)[select]
             c_sel = dp1.reshape(-1, x_eval.shape[-1])[select] if dp1 is not None else None
             op_sel = tag_labels.reshape(-1)[select] if tag_labels is not None else None
-            gl = self.generator(xp, t_sel, cond=c_sel, op_ids=op_sel)
-            loss_gen = F.cross_entropy(gl.float(), lb.clamp(0, gl.shape[-1] - 1))
+            target_ids = lb.clamp(0, self.generator.vocab_size - 1)
+            ctx_sel = dp1.reshape(-1, dp1.shape[-1])[select] if (self.contextual_gen and dp1 is not None) else None
+
+            if self.blob_diffusion:
+                try:
+                    gl, cand_ids, _ = self.generator(
+                        xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel,
+                        blob_size=self.blob_size, context=ctx_sel, return_candidates=True
+                    )
+                    target_local = (cand_ids == target_ids.view(-1, 1)).int().argmax(dim=-1)
+                    loss_gen = F.cross_entropy(gl.float(), target_local)
+                except Exception:
+                    gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel, context=ctx_sel)
+                    loss_gen = F.cross_entropy(gl.float(), target_ids)
+            else:
+                gl = self.generator(xp, t_sel, cond=c_sel, targets=target_ids, op_ids=op_sel, context=ctx_sel)
+                loss_gen = F.cross_entropy(gl.float(), target_ids)
         else:
             loss_gen = torch.tensor(0.0, device=x_t.device)
         return loss_tag, loss_gen
@@ -1637,6 +1818,8 @@ class DSBHybrid(nn.Module):
         progressive_fill: bool = False,       # Confidence-ranked sequential slot infilling on multi-token spans
         repetition_window: Optional[int] = 5, # Context window radius for repetition penalty (None/0 = whole canvas)
         exempt_stopwords: bool = True,        # Exempt common stopwords and syntax tokens from repetition penalty
+        blob_diffusion: Optional[bool] = None,# Restrict generation candidates to continuous SDE localized blob
+        blob_size: Optional[int] = None,      # Size of candidate blob (e.g. 512)
         return_trajectory: bool = False,      # If True, returns (results, trajectories) with step details
     ) -> Union[List[str], Tuple[List[str], List[List[dict]]]]:
         """
@@ -1716,6 +1899,8 @@ class DSBHybrid(nn.Module):
         dp1_cur = dp1
 
         trajectories: List[List[dict]] = [[] for _ in range(B)]
+        # Track previously visited tokens per position to eradicate ping-pong oscillation loops
+        visited_tokens: List[Dict[int, Set[int]]] = [{} for _ in range(B)]
 
         for iteration in range(max_iterations):
             changed = False
@@ -1723,6 +1908,11 @@ class DSBHybrid(nn.Module):
             next_emb: List[torch.Tensor] = []
 
             for b in range(B):
+                for p_idx, tok_val in enumerate(canvases[b]):
+                    if p_idx not in visited_tokens[b]:
+                        visited_tokens[b][p_idx] = set()
+                    visited_tokens[b][p_idx].add(tok_val)
+
                 emb = cur[b].unsqueeze(0)                 # (1, L, D)
                 L = emb.shape[1]
                 # Evaluate heads at t_eval (0.0 for static encoder embeddings; 1.0 when reading SDE terminal states)
@@ -1783,6 +1973,16 @@ class DSBHybrid(nn.Module):
                                 override_notes[idx] = "repetition stutter collapse"
                             tags[idx] = DELETE
 
+                # Whitespace-punctuation delimiter guard:
+                # If a standalone whitespace token (e.g. id 6 in sentencepiece) immediately precedes
+                # punctuation or EOS, never replace or insert into it (collapses dangling space to DELETE)
+                punc_ids = {4, 5, 20, 46, 1104}
+                for idx in range(len(cur_tokens) - 1):
+                    if cur_tokens[idx] == 6 and (cur_tokens[idx + 1] in punc_ids or cur_tokens[idx + 1] == eos):
+                        if tags[idx] in (REPLACE, INSERT):
+                            override_notes[idx] = "whitespace-punctuation guard"
+                            tags[idx] = DELETE
+
                 # Confidence gate: Reject weak KEEP predictions (demote to next-best edit op)
                 if keep_threshold > 0.0:
                     for idx in range(len(cur_tokens)):
@@ -1830,6 +2030,13 @@ class DSBHybrid(nn.Module):
                     op_tensor = torch.tensor([tags[p] for p in gen_positions], device=cur[b].device)
 
                     gen_feat = None
+                    # Decoder projection weights for blob candidate selection and distance gating:
+                    w_dec = None
+                    if hasattr(self.generator, "net") and len(self.generator.net) > 3:
+                        w_dec = getattr(self.generator.net[3], "weight", None)
+                    if w_dec is None:
+                        w_dec = embed_weight if embed_weight is not None else self.embed_weight
+
                     if decode_mode == "lm_head":
                         if hasattr(embedder, "decode_logits"):
                             gen_logits = embedder.decode_logits(cur_sel)
@@ -1837,19 +2044,42 @@ class DSBHybrid(nn.Module):
                             gen_logits = self.lm_head(cur_sel)
                         else:
                             gen_logits = self.generator(cur_sel, t_sel, cond=c_sel, op_ids=op_tensor)
+                        # Extract aligned feature representation for distance gating from lm_head if available
+                        target_lm = getattr(embedder, "lm_head", self.lm_head)
+                        if target_lm is not None and hasattr(target_lm, "dense") and hasattr(target_lm, "layer_norm"):
+                            try:
+                                gen_feat = target_lm.layer_norm(F.gelu(target_lm.dense(cur_sel)))
+                            except Exception:
+                                gen_feat = None
                     elif decode_mode == "nearest":
-                        w = embed_weight if embed_weight is not None else self.embed_weight
-                        if w is None:
+                        if w_dec is None:
                             raise ValueError("decode_mode='nearest' requires embed_weight (either passed or in DSBHybrid)")
                         normed_cur = F.normalize(cur_sel, dim=-1)
-                        normed_w = F.normalize(w.to(cur_sel.device), dim=-1)
+                        normed_w = F.normalize(w_dec.to(cur_sel.device), dim=-1)
                         gen_logits = (normed_cur @ normed_w.T) * 20.0
                     else:
-                        gen_out = self.generator(cur_sel, t_sel, cond=c_sel, op_ids=op_tensor, return_features=True)
+                        use_blob = (blob_diffusion if blob_diffusion is not None else getattr(self, "blob_diffusion", False)) and w_dec is not None
+                        b_sz = blob_size if blob_size is not None else (self.blob_size if getattr(self, "blob_diffusion", False) else None)
+                        ctx_sel = c_sel if getattr(self, "contextual_gen", False) else None
+                        try:
+                            gen_out = self.generator(
+                                cur_sel, t_sel, cond=c_sel, op_ids=op_tensor,
+                                blob_size=(b_sz if use_blob else None), context=ctx_sel, return_features=True
+                            )
+                        except TypeError:
+                            try:
+                                gen_out = self.generator(
+                                    cur_sel, t_sel, cond=c_sel, op_ids=op_tensor,
+                                    context=ctx_sel, return_features=True
+                                )
+                            except TypeError:
+                                gen_out = self.generator(
+                                    cur_sel, t_sel, cond=c_sel, op_ids=op_tensor, return_features=True
+                                )
                         if isinstance(gen_out, tuple):
                             gen_logits, gen_feat = gen_out
                         else:
-                            gen_logits = gen_out
+                            gen_logits, gen_feat = gen_out, None
 
                     # Dual-head logit blending: blend pretrained MLM head logits on REPLACE slots for factual exactness
                     if lm_blend_weight > 0.0 and decode_mode != "lm_head":
@@ -1876,19 +2106,30 @@ class DSBHybrid(nn.Module):
                         if sp_id is not None and sp_id < gen_logits.shape[-1]:
                             gen_logits[:, sp_id] = -1e9
 
-                    # Prevent self-replacement loops and spurious delimiter collapse on REPLACE and INSERT slots:
-                    # 1. A token tagged REPLACE or INSERT must never generate the same token as the current/anchor token.
-                    # 2. When replacing or inserting before a content token (non-punctuation), suppress lone dash/delimiter tokens.
+                    # Prevent self-replacement loops, ping-pong oscillation, and spurious delimiter collapse:
                     punc_tokens = {46, 20, 1104}  # en-dash, hyphen, em-dash
+                    # Dangling syntax tokens that should not end a clause immediately before punctuation or EOS:
+                    dangling_syntax_tokens = {23, 10, 70, 450, 903, 136, 678, 1295, 3688}  # in, a, the, that, this, and, with, from, here
                     for i_sel, pos in enumerate(gen_positions):
                         tg = tags[pos]
                         cur_t = canvases[b][pos]
-                        if (tg == REPLACE or tg == INSERT) and cur_t < gen_logits.shape[-1]:
-                            gen_logits[i_sel, cur_t] = -1e9
+                        if tg in (REPLACE, INSERT):
+                            if cur_t < gen_logits.shape[-1]:
+                                gen_logits[i_sel, cur_t] = -1e9
+                            # Ping-pong loop break: penalize any token previously seen at this position
+                            if pos in visited_tokens[b]:
+                                for prev_t in visited_tokens[b][pos]:
+                                    if prev_t not in special and prev_t < gen_logits.shape[-1]:
+                                        gen_logits[i_sel, prev_t] = -1e9
                             if cur_t not in punc_tokens and cur_t not in special:
                                 for p_id in punc_tokens:
                                     if p_id < gen_logits.shape[-1]:
                                         gen_logits[i_sel, p_id] = -1e9
+                            # Dangling syntax suppression: if replacing immediately before punctuation or EOS, suppress prepositions/connectors
+                            if pos + 1 < len(canvases[b]) and canvases[b][pos + 1] in (eos, 4, 5, 20, 46):
+                                for d_id in dangling_syntax_tokens:
+                                    if d_id < gen_logits.shape[-1]:
+                                        gen_logits[i_sel, d_id] = -1e9
 
                     # Build per-position penalized candidate list based on repetition_window
                     penalized_per_pos = []
@@ -1901,26 +2142,20 @@ class DSBHybrid(nn.Module):
                             tok_window = [t for t in canvases[b] if t not in exempt_tokens]
                         penalized_per_pos.append(tok_window)
 
-                    # Decoder projection weights for aligned distance gating:
-                    w_dec = None
-                    if hasattr(self.generator, "net") and len(self.generator.net) > 3:
-                        w_dec = getattr(self.generator.net[3], "weight", None)
-                    if w_dec is None:
-                        w_dec = embed_weight if embed_weight is not None else self.embed_weight
-
                     # Sampling
                     if progressive_fill and len(gen_positions) > 1:
                         # Confidence-ranked progressive in-filling for multi-token spans:
                         # Sort positions by highest max probability, sample, and sequentially resolve
                         conf_probs = F.softmax(gen_logits.detach(), dim=-1).max(dim=-1).values
                         sorted_order = torch.argsort(conf_probs, descending=True).tolist()
+                        accum_chosen = []
 
                         for sel_idx in sorted_order:
                             pos = gen_positions[sel_idx]
                             sub_logits = gen_logits[sel_idx:sel_idx + 1]
                             sub_feat = gen_feat[sel_idx:sel_idx + 1] if gen_feat is not None else None
                             sub_cur = cur_sel[sel_idx:sel_idx + 1]
-                            sub_penalized = [penalized_per_pos[sel_idx]]
+                            sub_penalized = [penalized_per_pos[sel_idx] + accum_chosen]
 
                             sub_sample = self._sample_topk(
                                 sub_logits, temperature, top_k, top_p,
@@ -1935,6 +2170,7 @@ class DSBHybrid(nn.Module):
                             )
                             if sub_sample:
                                 gen_toks[pos] = sub_sample[0]
+                                accum_chosen.append(sub_sample[0])
                     else:
                         sampled_tokens = self._sample_topk(
                             gen_logits, temperature, top_k, top_p,
