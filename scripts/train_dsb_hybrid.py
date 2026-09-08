@@ -494,6 +494,7 @@ def train(args, config):
     lex_weight = float(mcfg.get("lexical_loss_weight", 1.5))
     ang_margin = float(mcfg.get("angular_margin", 0.05))
     m_scale = float(mcfg.get("margin_scale", 64.0))
+    op_embed_dim = int(mcfg.get("op_embed_dim", 0))
 
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
@@ -512,6 +513,7 @@ def train(args, config):
         lexical_loss_weight=lex_weight,
         angular_margin=ang_margin,
         margin_scale=m_scale,
+        op_embed_dim=op_embed_dim,
     ).to(device)
 
     score_params = [p for p in score_net.parameters() if p.requires_grad]

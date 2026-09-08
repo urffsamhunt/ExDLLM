@@ -47,6 +47,8 @@ model:
   lexical_loss_weight: 1.5
   angular_margin: 0.05
   margin_scale: 64.0
+  # Operation-conditioned GenHead (differentiates in-filling REPLACE from prefixing INSERT)
+  op_embed_dim: 0
 
 dsb:
   beta_schedule: "linear"

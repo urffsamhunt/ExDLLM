@@ -175,6 +175,9 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
     lex_weight = float(mcfg.get("lexical_loss_weight", 1.5))
     ang_margin = float(mcfg.get("angular_margin", 0.05))
     m_scale = float(mcfg.get("margin_scale", 64.0))
+    op_embed_dim = int(mcfg.get("op_embed_dim", 0))
+    if state_dict is not None and "generator.op_emb.weight" in state_dict:
+        op_embed_dim = state_dict["generator.op_emb.weight"].shape[1]
     lm_head = getattr(embedder, "lm_head", None)
 
     hybrid = DSBHybrid(
@@ -193,6 +196,7 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
         lexical_loss_weight=lex_weight,
         angular_margin=ang_margin,
         margin_scale=m_scale,
+        op_embed_dim=op_embed_dim,
     ).to(device)
     return embedder, hybrid, tokenizer
 
@@ -279,6 +283,14 @@ def main():
                         help="Refinement conditioning mode: 'self' conditions on current canvas (default); 'initial' anchors to initial DP1")
     parser.add_argument("--min_iterations", type=int, default=1,
                         help="Minimum refinement iterations before allowing early convergence exit (default: 1)")
+    parser.add_argument("--lm_blend_weight", type=float, default=0.0,
+                        help="Logit blend factor with pretrained MLM head on REPLACE slots (0.0 = disabled, e.g. 0.35)")
+    parser.add_argument("--progressive_fill", action=argparse.BooleanOptionalAction, default=False,
+                        help="Enable confidence-ranked sequential slot infilling on multi-token spans (default: False)")
+    parser.add_argument("--repetition_window", type=int, default=5,
+                        help="Local context window radius for repetition penalty (default: 5; 0 to disable windowing / use full canvas)")
+    parser.add_argument("--exempt_stopwords", action=argparse.BooleanOptionalAction, default=True,
+                        help="Exempt common syntax and functional stopwords from repetition penalty (default: True)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -401,6 +413,10 @@ def main():
                 refine_cond_mode=args.refine_cond,
                 distance_threshold=args.distance_threshold,
                 t_eval=(1.0 if args.sde_steps > 0 else 0.0),
+                lm_blend_weight=args.lm_blend_weight,
+                progressive_fill=args.progressive_fill,
+                repetition_window=(args.repetition_window if args.repetition_window > 0 else None),
+                exempt_stopwords=args.exempt_stopwords,
             )
         t_decode = time.perf_counter()
         print("Generated Output:")
