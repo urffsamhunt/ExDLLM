@@ -90,7 +90,7 @@ class TextEmbedder(torch.nn.Module):
         return pooled  # (B, D)
 
 
-def build_hybrid(config, device, state_dict=None, embedder=None):
+def build_hybrid(config, device, state_dict=None, embedder=None, head_mode=None):
     """Reconstruct embedder + score net + bridge + hybrid from a config dict and state dict.
 
     Returns (embedder, hybrid, tokenizer).
@@ -184,9 +184,23 @@ def build_hybrid(config, device, state_dict=None, embedder=None):
     if state_dict is not None and "generator.ctx_proj.weight" in state_dict:
         contextual_gen = True
     lm_head = getattr(embedder, "lm_head", None)
+    if head_mode is None:
+        head_mode = mcfg.get("head_mode")
+    if head_mode is None and state_dict is not None:
+        has_tagger = any(k.startswith("tagger.") for k in state_dict)
+        has_unified = any(k.startswith("unified_head.") for k in state_dict)
+        if has_tagger and not has_unified:
+            head_mode = "dual"
+        elif has_unified and not has_tagger:
+            head_mode = "unified"
+        elif has_tagger and has_unified:
+            head_mode = mcfg.get("head_mode", "dual")
+    if head_mode is None:
+        head_mode = "dual"
 
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
+        head_mode=head_mode,
         lambda_tag=config["training"].get("lambda_tag", 1.0),
         lambda_gen=config["training"].get("lambda_gen", 1.0),
         tag_weights=mcfg.get("tag_weights"),
@@ -303,6 +317,12 @@ def main():
                         help="Restrict token predictions to localized continuous SDE blob (default: True)")
     parser.add_argument("--blob_size", type=int, default=None,
                         help="Candidate blob size for BRCD (default: from checkpoint/config or 512)")
+    parser.add_argument("--unroll_subwords", action=argparse.BooleanOptionalAction, default=True,
+                        help="Speculatively unroll continuation subwords for multi-token word expansions (default: True)")
+    parser.add_argument("--max_unroll_subwords", type=int, default=4,
+                        help="Maximum continuation subwords to splice into a single slot (default: 4)")
+    parser.add_argument("--head_mode", choices=["auto", "dual", "unified"], default="auto",
+                        help="Tagger / generator head mode ('dual' or 'unified'; default: 'auto' based on ckpt/config)")
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -350,7 +370,10 @@ def main():
     print(f"{'=' * 60}\n")
 
     if fmt == "hybrid":
-        _, hybrid, _ = build_hybrid(config, device, state_dict=ckpt.get("hybrid"), embedder=embedder)
+        forced_head = None if args.head_mode == "auto" else args.head_mode
+        if forced_head is None and "head_mode" in ckpt:
+            forced_head = ckpt["head_mode"]
+        _, hybrid, _ = build_hybrid(config, device, state_dict=ckpt.get("hybrid"), embedder=embedder, head_mode=forced_head)
         sd = ckpt["hybrid"]
         if config.get("model", {}).get("tie_weights", True) and "generator.net.3.weight" in sd:
             if not ckpt.get("config", {}).get("model", {}).get("tie_weights", False):
@@ -431,6 +454,8 @@ def main():
                 exempt_stopwords=args.exempt_stopwords,
                 blob_diffusion=args.blob_diffusion,
                 blob_size=args.blob_size,
+                unroll_subwords=args.unroll_subwords,
+                max_unroll_subwords=args.max_unroll_subwords,
             )
         t_decode = time.perf_counter()
         print("Generated Output:")

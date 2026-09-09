@@ -362,7 +362,20 @@ def evaluate(
             if del_mask.any():
                 dp2 = apply_collapse_drift(dp2, del_mask, attn)
             cond = tag_labels.clamp(0, 5) if mcfg.get("edit_conditioned_score", False) else None
-            if scheme == "full":
+            if getattr(hybrid, "head_mode", "dual") == "unified":
+                u_targets = hybrid.build_unified_targets(
+                    tag_labels, gen_labels, clean_aligned_ids, noisy_ids, attn
+                )
+                loss, loss_dict = hybrid.loss(
+                    dp1, dp2, clean_aligned_ids, noisy_ids, attn,
+                    t=torch.rand(dp1.shape[0], device=device),
+                    expose_ratio=0.0,
+                    tag_labels=tag_labels,
+                    gen_labels=gen_labels,
+                    recon_steps=recon_steps,
+                    unified_labels=u_targets,
+                )
+            elif scheme == "full":
                 loss, loss_dict = hybrid.loss_edit(dp1, dp2, tag_labels, gen_labels,
                                                    condition_tags=cond,
                                                    attention_mask=attn,
@@ -381,6 +394,7 @@ def evaluate(
         tag_sum += loss_dict.get("tag", 0.0)
         gen_sum += loss_dict.get("gen", 0.0)
         rout_sum += loss_dict.get("router", 0.0)
+        u_sum = loss_dict.get("unified", 0.0)
         count += 1
 
     hybrid.train()
@@ -395,6 +409,7 @@ def evaluate(
         "tag": tag_sum / count,
         "router": rout_sum / count,
         "gen": gen_sum / count,
+        "unified": u_sum / count,
     }
 
 
@@ -498,12 +513,15 @@ def train(args, config):
     blob_diffusion = bool(getattr(args, "blob_diffusion", None) if getattr(args, "blob_diffusion", None) is not None else mcfg.get("blob_diffusion", True))
     blob_size = int(getattr(args, "blob_size", None) if getattr(args, "blob_size", None) is not None else mcfg.get("blob_size", 512))
     contextual_gen = bool(mcfg.get("contextual_gen", True))
+    head_mode = getattr(args, "head_mode", None) or mcfg.get("head_mode", "dual")
 
     hybrid = DSBHybrid(
         bridge=bridge, vocab_size=tokenizer.vocab_size,
+        head_mode=head_mode,
         lambda_sm=config["training"].get("lambda_sm", 20.0),
         lambda_tag=config["training"].get("lambda_tag", 1.0),
         lambda_gen=config["training"].get("lambda_gen", 1.0),
+        lambda_unified=config["training"].get("lambda_unified", 1.0),
         tag_weights=mcfg.get("tag_weights"),
         condition_heads=mcfg.get("condition_heads", False),
         time_embed_dim=mcfg.get("time_embed_dim", 128),
@@ -525,7 +543,10 @@ def train(args, config):
     score_params = [p for p in score_net.parameters() if p.requires_grad]
     if embedder.trainable:
         score_params += [p for p in embedder.parameters() if p.requires_grad]
-    head_params = [p for p in list(hybrid.tagger.parameters()) + list(hybrid.generator.parameters()) if p.requires_grad]
+    if head_mode == "unified":
+        head_params = [p for p in hybrid.unified_head.parameters() if p.requires_grad]
+    else:
+        head_params = [p for p in list(hybrid.tagger.parameters()) + list(hybrid.generator.parameters()) if p.requires_grad]
     params = score_params + head_params
     n_params = sum(p.numel() for p in params)
     print(f"Trainable parameters: {n_params:,} (score: {sum(p.numel() for p in score_params):,}, heads: {sum(p.numel() for p in head_params):,})")
@@ -664,7 +685,20 @@ def train(args, config):
                 max_expose = tcfg.get("max_expose_ratio", 0.5)
                 expose_warmup = tcfg.get("expose_warmup_steps", total // 4)
                 expose_ratio = min(max_expose, max_expose * global_step / max(1, expose_warmup))
-                if scheme == "full":
+                if head_mode == "unified":
+                    u_targets = hybrid.build_unified_targets(
+                        tag_labels, gen_labels, clean_aligned_ids, noisy_ids, attn
+                    )
+                    loss, loss_dict = hybrid.loss(
+                        dp1, dp2, clean_aligned_ids, noisy_ids, attn,
+                        t=torch.rand(dp1.shape[0], device=device),
+                        expose_ratio=expose_ratio,
+                        tag_labels=tag_labels,
+                        gen_labels=gen_labels,
+                        recon_steps=recon_steps,
+                        unified_labels=u_targets,
+                    )
+                elif scheme == "full":
                     loss, loss_dict = hybrid.loss_edit(dp1, dp2, tag_labels, gen_labels,
                                                        condition_tags=cond,
                                                        attention_mask=attn,
@@ -693,9 +727,12 @@ def train(args, config):
                     sm_str = f"sm {loss_dict['score_matching']:.3f} (m {loss_dict['sm_macro']:.3f}/l {loss_dict['sm_lex']:.3f})"
                 else:
                     sm_str = f"sm {loss_dict['score_matching']:.3f}"
+                if "unified" in loss_dict:
+                    head_str = f"unified {loss_dict['unified']:.3f}"
+                else:
+                    head_str = f"tag {loss_dict.get('tag', 0.0):.3f} gen {loss_dict.get('gen', 0.0):.3f}"
                 print(f"step {global_step}/{total}  total {loss.item():.4f}  "
-                      f"[{sm_str}{rout_str} tag {loss_dict['tag']:.3f} "
-                      f"gen {loss_dict['gen']:.3f}{blob_str}]  lr {scheduler.get_last_lr()[0]:.2e}")
+                      f"[{sm_str}{rout_str} {head_str}{blob_str}]  lr {scheduler.get_last_lr()[0]:.2e}")
 
                 # Expensive interpretability diagnostics (baseline / signal /
                 # full reverse-SDE reconstruction + discrete head accuracy) — run every `diag_every`
@@ -748,9 +785,12 @@ def train(args, config):
                 if val_metrics is not None:
                     val_loss = val_metrics["total"]
                     val_rout_str = f" rout {val_metrics['router']:.3f}" if val_metrics.get("router", 0.0) > 0 else ""
+                    if "unified" in val_metrics and val_metrics["unified"] > 0:
+                        val_head_str = f"unified {val_metrics['unified']:.3f}"
+                    else:
+                        val_head_str = f"tag {val_metrics['tag']:.3f} gen {val_metrics['gen']:.3f}"
                     print(f"  [eval] step {global_step} val_loss {val_loss:.4f} "
-                          f"[sm {val_metrics['score_matching']:.3f}{val_rout_str} tag {val_metrics['tag']:.3f} "
-                          f"gen {val_metrics['gen']:.3f}] (best {best_val:.4f})")
+                          f"[sm {val_metrics['score_matching']:.3f}{val_rout_str} {val_head_str}] (best {best_val:.4f})")
                 else:
                     val_loss = loss.item()
 
@@ -762,6 +802,7 @@ def train(args, config):
                         "config": config,
                         "dim": dim,
                         "embedder_name": mcfg["embedder"],
+                        "head_mode": head_mode,
                         "best_val": best_val,
                         "global_step": global_step,
                     }, os.path.join(args.save_dir, "best.pt"))
@@ -779,6 +820,7 @@ def train(args, config):
                     "config": config,
                     "dim": dim,
                     "embedder_name": mcfg["embedder"],
+                    "head_mode": head_mode,
                 }, os.path.join(args.save_dir, "resume.pt"))
 
     torch.save({
@@ -787,6 +829,7 @@ def train(args, config):
         "config": config,
         "dim": dim,
         "embedder_name": mcfg["embedder"],
+        "head_mode": head_mode,
     }, os.path.join(args.save_dir, "final.pt"))
     print("Pretraining complete.")
 
@@ -799,6 +842,8 @@ def parse_args():
     parser.add_argument("--save_dir", default="./checkpoints_dsb_hybrid")
     parser.add_argument("--resume", default=None,
                         help="Path to a resume.pt checkpoint to continue from")
+    parser.add_argument("--head_mode", default=None, choices=["dual", "unified"],
+                        help="Edit head architecture: 'dual' (separate tagger+generator) or 'unified' (Paradigm C homogeneous head)")
     parser.add_argument("--max_steps", default=None, type=int,
                         help="Override training.max_steps from config")
     parser.add_argument("--blob_diffusion", action=argparse.BooleanOptionalAction, default=None,

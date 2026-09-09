@@ -52,6 +52,14 @@ KEEP, DELETE, REPLACE, INSERT, EXPAND = 0, 1, 2, 3, 4
 NUM_TAGS = 5
 TAG_NAMES = ["KEEP", "DELETE", "REPLACE", "INSERT", "EXPAND"]
 
+# Paradigm C: Unified Action Space constants
+# Meta-action offsets placed after vocabulary: V* = V + NUM_UNIFIED_ACTIONS
+ACTION_OFFSET_KEEP = 0
+ACTION_OFFSET_DELETE = 1
+ACTION_OFFSET_EXPAND = 2
+NUM_UNIFIED_ACTIONS = 3
+UNIFIED_ACTION_NAMES = ["<KEEP>", "<DELETE>", "<EXPAND>"]
+
 
 # ── Edit-conditioned score network (Phase 2) ─────────────────────────────────
 
@@ -969,6 +977,151 @@ class GenHead(nn.Module):
         return tuple(out)
 
 
+# ── Unified Action Head (Paradigm C: Single-Head Homogeneous Generation) ─────
+
+class UnifiedEditHead(nn.Module):
+    """
+    Unified Action Head (Paradigm C): Single homogeneous projection over V* = V + 3.
+
+    Collapses discrete edit tags and vocabulary tokens into a single homogeneous manifold.
+    The output logits cover:
+        0 .. V-1: Vocabulary tokens (emission / in-place replacement / infill)
+        V + 0:    ACTION_KEEP (preserve current token)
+        V + 1:    ACTION_DELETE (delete current token)
+        V + 2:    ACTION_EXPAND (expand into multiple mask slots)
+
+    Vocabulary projection (0..V-1) shares or initializes from the pretrained LM head
+    (dense, layer_norm, decoder weight and bias), preserving zero-shot MLM semantics.
+    Action logits (V..V+2) are learned linear projections from the aligned hidden state.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        vocab_size: int,
+        time_embed_dim: int = 128,
+        cond_dim: int = 0,
+        embed_weight: Optional[torch.Tensor] = None,
+        tie_weights: bool = True,
+        lm_head: Optional[nn.Module] = None,
+        subspace_factorization: bool = False,
+        macro_dim: int = 512,
+        lexical_dim: int = 256,
+        num_actions: int = NUM_UNIFIED_ACTIONS,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.vocab_size = vocab_size
+        self.num_actions = num_actions
+        self.total_dim = vocab_size + num_actions
+        self.cond_dim = cond_dim
+        self.time_embed_dim = time_embed_dim
+        self.subspace_factorization = subspace_factorization
+        self.macro_dim = macro_dim
+        self.lexical_dim = lexical_dim
+
+        if time_embed_dim > 0:
+            self.time_mlp = nn.Sequential(
+                nn.Linear(1, time_embed_dim),
+                nn.SiLU(),
+                nn.Linear(time_embed_dim, time_embed_dim),
+                nn.SiLU(),
+            )
+        else:
+            self.time_mlp = None
+
+        # Feature trunk: (dim + cond_dim + time_embed_dim) -> dim -> GELU -> LayerNorm
+        self.dense = nn.Linear(dim + cond_dim + time_embed_dim, dim)
+        self.act = nn.GELU()
+        self.layer_norm = nn.LayerNorm(dim)
+
+        # Projections:
+        # 1. Vocabulary projection (dim -> vocab_size)
+        self.vocab_proj = nn.Linear(dim, vocab_size)
+
+        # 2. Discrete action projection (dim -> num_actions: KEEP, DELETE, EXPAND)
+        self.action_proj = nn.Linear(dim, num_actions)
+
+        # Optional subspace factorization
+        if subspace_factorization:
+            self.lex_proj = nn.Linear(lexical_dim, dim, bias=False)
+            nn.init.zeros_(self.lex_proj.weight)
+        else:
+            self.lex_proj = None
+
+        # Initialize from pretrained lm_head if available
+        if lm_head is not None:
+            with torch.no_grad():
+                self.dense.weight.zero_()
+                x_start = self.cond_dim
+                if hasattr(lm_head, "dense") and hasattr(lm_head.dense, "weight"):
+                    self.dense.weight[:, x_start : x_start + dim].copy_(lm_head.dense.weight)
+                    if hasattr(lm_head.dense, "bias") and lm_head.dense.bias is not None:
+                        self.dense.bias.copy_(lm_head.dense.bias)
+                if hasattr(lm_head, "layer_norm") and hasattr(lm_head.layer_norm, "weight"):
+                    self.layer_norm.weight.copy_(lm_head.layer_norm.weight)
+                    if hasattr(lm_head.layer_norm, "bias") and lm_head.layer_norm.bias is not None:
+                        self.layer_norm.bias.copy_(lm_head.layer_norm.bias)
+                if hasattr(lm_head, "decoder") and hasattr(lm_head.decoder, "weight"):
+                    self.vocab_proj.weight.copy_(lm_head.decoder.weight)
+                elif embed_weight is not None:
+                    self.vocab_proj.weight.copy_(embed_weight)
+                if hasattr(lm_head, "bias") and lm_head.bias is not None:
+                    self.vocab_proj.bias.copy_(lm_head.bias)
+                elif hasattr(lm_head, "decoder") and hasattr(lm_head.decoder, "bias") and lm_head.decoder.bias is not None:
+                    self.vocab_proj.bias.copy_(lm_head.decoder.bias)
+            if tie_weights:
+                if hasattr(lm_head, "decoder") and hasattr(lm_head.decoder, "weight"):
+                    self.vocab_proj.weight = lm_head.decoder.weight
+                elif embed_weight is not None:
+                    self.vocab_proj.weight = embed_weight
+        elif embed_weight is not None:
+            with torch.no_grad():
+                self.vocab_proj.weight.copy_(embed_weight)
+            if tie_weights:
+                self.vocab_proj.weight = embed_weight
+
+        # Initialize action_proj cleanly
+        nn.init.normal_(self.action_proj.weight, std=0.02)
+        nn.init.zeros_(self.action_proj.bias)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        cond: Optional[torch.Tensor] = None,
+        return_features: bool = False,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        # x: (B, S, D) or (N, D)
+        h = x
+        if self.cond_dim > 0:
+            if cond is None:
+                raise ValueError("head built with cond_dim > 0 requires cond")
+            h = torch.cat([cond, h], dim=-1)
+        if self.time_mlp is not None:
+            if t.dim() == 1:
+                t_emb = self.time_mlp(t.reshape(-1, 1))
+            else:
+                t_emb = self.time_mlp(t)
+            if x.dim() == 3:
+                t_emb = t_emb.unsqueeze(1).expand(-1, h.shape[1], -1)
+            h = torch.cat([h, t_emb], dim=-1)
+
+        feat = self.layer_norm(self.act(self.dense(h)))
+
+        if self.subspace_factorization and self.lex_proj is not None:
+            x_lex = x[..., self.macro_dim:]
+            feat = feat + self.lex_proj(x_lex)
+
+        v_logits = self.vocab_proj(feat)       # (..., V)
+        a_logits = self.action_proj(feat)      # (..., 3)
+        unified_logits = torch.cat([v_logits, a_logits], dim=-1)  # (..., V + 3)
+
+        if return_features:
+            return unified_logits, feat
+        return unified_logits
+
+
 # ── The hybrid model ─────────────────────────────────────────────────────────
 
 class DSBHybrid(nn.Module):
@@ -1002,10 +1155,13 @@ class DSBHybrid(nn.Module):
         blob_diffusion: bool = True,
         blob_size: int = 512,
         contextual_gen: bool = True,
+        head_mode: str = "dual",
+        lambda_unified: float = 1.0,
     ):
         super().__init__()
         self.bridge: DiffSchrodingerBridge = bridge
         dim = bridge.dim
+        self.head_mode = head_mode
         self.condition_heads = condition_heads
         self.subspace_factorization = subspace_factorization
         self.macro_dim = macro_dim
@@ -1034,9 +1190,20 @@ class DSBHybrid(nn.Module):
             op_embed_dim=op_embed_dim,
             contextual_gen=contextual_gen,
         )
+
+        # Unified Action Head (Paradigm C)
+        self.unified_head = UnifiedEditHead(
+            dim, vocab_size, time_embed_dim=time_embed_dim,
+            cond_dim=head_cond_dim, embed_weight=embed_weight,
+            tie_weights=tie_weights, lm_head=lm_head,
+            subspace_factorization=subspace_factorization,
+            macro_dim=macro_dim, lexical_dim=lexical_dim,
+        )
+
         self.lambda_sm = lambda_sm
         self.lambda_tag = lambda_tag
         self.lambda_gen = lambda_gen
+        self.lambda_unified = lambda_unified
         self.gen_ignore_index = gen_ignore_index
         self.embed_weight = embed_weight
         self.lm_head = lm_head
@@ -1077,6 +1244,47 @@ class DSBHybrid(nn.Module):
         gen_labels[corrupted] = clean_ids[corrupted]
         return tag_labels, gen_labels
 
+    def build_unified_targets(
+        self,
+        tag_labels: torch.Tensor,       # (B, S)
+        gen_labels: torch.Tensor,       # (B, S)
+        clean_ids: torch.Tensor,        # (B, S)
+        noisy_ids: torch.Tensor,        # (B, S)
+        attention_mask: torch.Tensor,   # (B, S)
+    ) -> torch.Tensor:
+        """
+        Construct ground-truth targets in unified action space V* = V + 3 (Paradigm C):
+          - tag == KEEP:                 V + ACTION_OFFSET_KEEP
+          - tag == DELETE:               V + ACTION_OFFSET_DELETE
+          - tag == EXPAND:               V + ACTION_OFFSET_EXPAND
+          - tag in (REPLACE, INSERT):    gen_labels (clean token in 0..V-1)
+          - ignore / pad:                -100
+        """
+        device = tag_labels.device
+        B, S = tag_labels.shape
+        V = self.generator.vocab_size if hasattr(self, "generator") else self.unified_head.vocab_size
+
+        u_targets = torch.full((B, S), -100, dtype=torch.long, device=device)
+        valid = (attention_mask == 1) & (tag_labels != -100)
+
+        # 1. KEEP positions -> V + 0
+        keep_mask = valid & (tag_labels == KEEP)
+        u_targets[keep_mask] = V + ACTION_OFFSET_KEEP
+
+        # 2. DELETE positions -> V + 1
+        del_mask = valid & (tag_labels == DELETE)
+        u_targets[del_mask] = V + ACTION_OFFSET_DELETE
+
+        # 3. EXPAND positions -> V + 2
+        exp_mask = valid & (tag_labels == EXPAND)
+        u_targets[exp_mask] = V + ACTION_OFFSET_EXPAND
+
+        # 4. REPLACE and INSERT positions -> clean token ID in 0..V-1
+        gen_valid = valid & ((tag_labels == REPLACE) | (tag_labels == INSERT)) & (gen_labels >= 0) & (gen_labels < V)
+        u_targets[gen_valid] = gen_labels[gen_valid]
+
+        return u_targets
+
     def loss(
         self,
         dp1: torch.Tensor,          # (B, D) or (B, S, D) corrupted embedding
@@ -1089,9 +1297,12 @@ class DSBHybrid(nn.Module):
         tag_labels: Optional[torch.Tensor] = None,
         gen_labels: Optional[torch.Tensor] = None,
         recon_steps: Optional[int] = None,
+        unified_labels: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, dict]:  # type: ignore[type-arg]
         """
-        Joint loss = score_matching + lambda_tag * tag_ce + lambda_gen * gen_ce.
+        Joint loss:
+          - In dual mode: score_matching + lambda_tag * tag_ce + lambda_gen * gen_ce.
+          - In unified mode (Paradigm C): score_matching + lambda_unified * unified_ce.
 
         When ``expose_ratio > 0``, the generator head is occasionally trained
         on the SDE's own imperfect reconstruction (``bridge.sample(dp1)``) at
@@ -1166,6 +1377,32 @@ class DSBHybrid(nn.Module):
             loss_router = F.cross_entropy(
                 routing_logits.permute(0, 2, 1).float(), tag_labels, weight=rw, ignore_index=-100
             )
+
+        # Unified Action Head (Paradigm C): Homogeneous single-head loss
+        if self.head_mode == "unified" and self.unified_head is not None:
+            if unified_labels is None:
+                unified_labels = self.build_unified_targets(
+                    tag_labels, gen_labels, clean_ids, noisy_ids, attention_mask
+                )
+            u_logits = self.unified_head(x_t, t, cond=dp1)  # (B, S, V + 3)
+            loss_unified = F.cross_entropy(
+                u_logits.permute(0, 2, 1).float(),
+                unified_labels,
+                ignore_index=-100,
+            )
+            total = self.lambda_sm * loss_sm + self.lambda_unified * loss_unified + loss_router
+            res_dict = {
+                "total": total.item(),
+                "score_matching": loss_sm.item(),
+                "unified": loss_unified.item(),
+                "tag": 0.0,
+                "gen": 0.0,
+                "router": loss_router.item() if routing_logits is not None else 0.0,
+            }
+            if self.subspace_factorization:
+                res_dict["sm_macro"] = loss_sm_macro.item() if isinstance(loss_sm_macro, torch.Tensor) else float(loss_sm_macro)
+                res_dict["sm_lex"] = loss_sm_lex.item() if isinstance(loss_sm_lex, torch.Tensor) else float(loss_sm_lex)
+            return total, res_dict
 
         # 3) Tagger head on the SDE intermediate embedding x_t (t + DP1
         #    conditioned so corruption stays identifiable at low t).
@@ -1643,10 +1880,20 @@ class DSBHybrid(nn.Module):
             # (evaluated at t=1 against the source DP1, matching training-time
             # conditioning).
             t_row = torch.ones(1, device=x.device)
-            tag_logits = self.tagger(x[b].unsqueeze(0), t_row,
-                                     cond=dp1[b:b+1])[0]            # (S, NUM_TAGS)
-            gen_logits = self.generator(x[b], t_row.expand(S),
-                                        cond=dp1[b])                # (S, V)
+            if getattr(self, "head_mode", "dual") == "unified" and hasattr(self, "unified_head") and self.unified_head is not None:
+                u_logits = self.unified_head(x[b].unsqueeze(0), t_row, cond=dp1[b:b+1])[0]  # (S, V + 3)
+                V = self.unified_head.vocab_size
+                tag_logits = torch.full((S, 5), -1e9, device=x.device)
+                tag_logits[:, KEEP] = u_logits[:, V + ACTION_OFFSET_KEEP]
+                tag_logits[:, DELETE] = u_logits[:, V + ACTION_OFFSET_DELETE]
+                tag_logits[:, EXPAND] = u_logits[:, V + ACTION_OFFSET_EXPAND]
+                tag_logits[:, REPLACE] = u_logits[:, :V].max(dim=-1).values
+                gen_logits = u_logits[:, :V]
+            else:
+                tag_logits = self.tagger(x[b].unsqueeze(0), t_row,
+                                         cond=dp1[b:b+1])[0]            # (S, NUM_TAGS)
+                gen_logits = self.generator(x[b], t_row.expand(S),
+                                            cond=dp1[b])                # (S, V)
             tags = tag_logits.argmax(-1).tolist()
             gen_toks = self._sample_topk(gen_logits, temperature, top_k, top_p)
 
@@ -1760,9 +2007,113 @@ class DSBHybrid(nn.Module):
         chosen_tokens = topk_idx.gather(1, sampled_indices).squeeze(-1)  # (N,)
         return chosen_tokens.tolist()
 
+    @torch.no_grad()
+    def _unroll_subwords(
+        self,
+        prefix_ids: List[int],
+        start_token_id: int,
+        tokenizer,
+        embedder,
+        max_unroll: int = 4,
+    ) -> List[int]:
+        """
+        Speculatively unroll continuation subwords starting from start_token_id.
+
+        Evaluates the language model head / decoder at the prefix
+        (prefix_ids + [start_token_id, ...]) to test if the most probable next token
+        is a subword continuation (i.e. does not begin with a whitespace / word-boundary marker).
+
+        Example:
+            prefix: "The capital of Pakistan is"
+            start_token: " Islam"
+            next_token: "abad" (no leading space -> continuation subword!)
+            result: [" Islam", "abad"]
+        """
+        if tokenizer is None or embedder is None or max_unroll <= 1:
+            return [start_token_id]
+
+        bos = getattr(tokenizer, "bos_token_id", 0)
+        eos = getattr(tokenizer, "eos_token_id", 2)
+        pad = getattr(tokenizer, "pad_token_id", 1)
+        mask_id = getattr(tokenizer, "mask_token_id", None)
+        if mask_id is None and hasattr(embedder, "mask_id"):
+            mask_id = embedder.mask_id
+        specials = {bos, eos, pad, mask_id}
+
+        unrolled = [start_token_id]
+        cur_seq = list(prefix_ids) + [start_token_id]
+        if bos is not None and (not cur_seq or cur_seq[0] != bos):
+            full_seq = [bos] + cur_seq
+        else:
+            full_seq = list(cur_seq)
+
+        punc_chars = set(".,;:!?-—\"'()[]{}/<>*&^%$#@~`")
+        dev = next(embedder.parameters()).device if hasattr(embedder, "parameters") and list(embedder.parameters()) else torch.device("cpu")
+
+        for _ in range(max_unroll - 1):
+            try:
+                # Query MLM with mask token at the continuation position
+                if mask_id is not None:
+                    eval_seq = full_seq + ([mask_id, eos] if eos is not None else [mask_id])
+                    query_pos = len(full_seq)
+                else:
+                    eval_seq = list(full_seq)
+                    query_pos = -1
+
+                inp = torch.tensor([eval_seq], dtype=torch.long, device=dev)
+                attn = torch.ones_like(inp)
+                if hasattr(embedder, "embed_ids"):
+                    h = embedder.embed_ids(inp, attn)
+                else:
+                    h = embedder(inp)
+
+                if hasattr(embedder, "decode_logits"):
+                    logits = embedder.decode_logits(h)[:, query_pos, :]  # (1, V)
+                elif hasattr(self, "unified_head") and self.unified_head is not None:
+                    u_out = self.unified_head(h[:, query_pos:query_pos+1, :], torch.zeros(1, device=dev))
+                    logits = u_out[:, -1, :self.unified_head.vocab_size]
+                elif hasattr(self, "generator") and hasattr(self.generator, "net"):
+                    g_out = self.generator(h[:, query_pos, :], torch.zeros(1, device=dev))
+                    logits = g_out if isinstance(g_out, torch.Tensor) else g_out[0]
+                else:
+                    break
+
+                for sp in specials:
+                    if sp is not None and sp < logits.shape[-1]:
+                        logits[0, sp] = -1e9
+
+                next_tok = logits[0].argmax().item()
+                next_str = tokenizer.decode([next_tok])
+                if hasattr(tokenizer, "convert_ids_to_tokens"):
+                    piece = tokenizer.convert_ids_to_tokens(next_tok)
+                else:
+                    piece = next_str
+
+                if isinstance(piece, (list, tuple)) and piece:
+                    piece = piece[0]
+                if not isinstance(piece, str) or not piece or not next_str or next_str.isspace():
+                    break
+
+                # Subword continuation check:
+                # SentencePiece uses   (\u2581), RoBERTa/BPE uses Ġ or standard space ' '
+                if piece.startswith("\u2581") or piece.startswith("Ġ") or piece.startswith(" "):
+                    break
+                if piece.startswith("<") or piece.startswith("["):
+                    break
+                if any(c in punc_chars for c in piece) or any(c in punc_chars for c in next_str):
+                    break
+
+                unrolled.append(next_tok)
+                full_seq.append(next_tok)
+            except Exception:
+                break
+
+        return unrolled
+
     @staticmethod
     def _apply_edits(canvas_ids, tags, gen_toks, bos, eos, pad, M):
-        """Apply KEEP/DELETE/REPLACE/INSERT/EXPAND, ported from DLLM._execute_edits."""
+        """Apply KEEP/DELETE/REPLACE/INSERT/EXPAND, ported from DLLM._execute_edits.
+        Supports both single token IDs and variable-length token lists in gen_toks."""
         out = []
         for i, tok in enumerate(canvas_ids):
             if i >= len(tags):
@@ -1774,15 +2125,27 @@ class DSBHybrid(nn.Module):
                 out.append(tok); continue
             if i == len(canvas_ids) - 1 and tok == eos:
                 if tag == INSERT:
-                    out.append(gen if gen != M else tok)
+                    if isinstance(gen, list):
+                        for g in gen:
+                            out.append(g if g != M else tok)
+                    else:
+                        out.append(gen if gen != M else tok)
                 out.append(tok)
                 continue
             if tag == DELETE:
                 continue
             elif tag == REPLACE:
-                out.append(gen if gen != M else tok)
+                if isinstance(gen, list):
+                    for g in gen:
+                        out.append(g if g != M else tok)
+                else:
+                    out.append(gen if gen != M else tok)
             elif tag == INSERT:
-                out.append(gen if gen != M else tok)
+                if isinstance(gen, list):
+                    for g in gen:
+                        out.append(g if g != M else tok)
+                else:
+                    out.append(gen if gen != M else tok)
                 out.append(tok)
             elif tag == EXPAND:
                 out.append(M); out.append(M)
@@ -1821,6 +2184,8 @@ class DSBHybrid(nn.Module):
         blob_diffusion: Optional[bool] = None,# Restrict generation candidates to continuous SDE localized blob
         blob_size: Optional[int] = None,      # Size of candidate blob (e.g. 512)
         return_trajectory: bool = False,      # If True, returns (results, trajectories) with step details
+        unroll_subwords: bool = True,         # Speculatively unroll continuation subwords for multi-token replacements
+        max_unroll_subwords: int = 4,         # Max continuation subwords to splice into a single slot
     ) -> Union[List[str], Tuple[List[str], List[List[dict]]]]:
         """
         True variable-length iterative refinement decode (DLLM-style, ported).
@@ -1929,7 +2294,21 @@ class DSBHybrid(nn.Module):
                         c_pad = torch.zeros(1, L - c.shape[1], c.shape[2],
                                             device=c.device, dtype=c.dtype)
                         c_row = torch.cat([c, c_pad], dim=1)
-                tag_logits = self.tagger(emb, t_row, cond=c_row)[0]     # (L, T)
+
+                u_logits_cached = None
+                u_feat_cached = None
+                if getattr(self, "head_mode", "dual") == "unified" and hasattr(self, "unified_head") and self.unified_head is not None:
+                    u_out = self.unified_head(emb, t_row, cond=c_row, return_features=True)
+                    u_logits_cached, u_feat_cached = u_out
+                    u_row = u_logits_cached[0]
+                    V = self.unified_head.vocab_size
+                    tag_logits = torch.full((L, 5), -1e9, device=emb.device)
+                    tag_logits[:, KEEP] = u_row[:, V + ACTION_OFFSET_KEEP]
+                    tag_logits[:, DELETE] = u_row[:, V + ACTION_OFFSET_DELETE]
+                    tag_logits[:, EXPAND] = u_row[:, V + ACTION_OFFSET_EXPAND]
+                    tag_logits[:, REPLACE] = u_row[:, :V].max(dim=-1).values
+                else:
+                    tag_logits = self.tagger(emb, t_row, cond=c_row)[0]     # (L, T)
                 # If score net has an edit router, ensemble its routing prediction with the tagger
                 if getattr(self.bridge.score_net, "gated_drift", False) and getattr(self.bridge.score_net, "router", None) is not None:
                     try:
@@ -2037,7 +2416,13 @@ class DSBHybrid(nn.Module):
                     if w_dec is None:
                         w_dec = embed_weight if embed_weight is not None else self.embed_weight
 
-                    if decode_mode == "lm_head":
+                    if getattr(self, "head_mode", "dual") == "unified" and u_logits_cached is not None:
+                        V = self.unified_head.vocab_size
+                        gen_logits = u_logits_cached[0, pos_tensor, :V]
+                        gen_feat = u_feat_cached[0, pos_tensor] if u_feat_cached is not None else None
+                        if w_dec is None:
+                            w_dec = getattr(self.unified_head.vocab_proj, "weight", None)
+                    elif decode_mode == "lm_head":
                         if hasattr(embedder, "decode_logits"):
                             gen_logits = embedder.decode_logits(cur_sel)
                         elif self.lm_head is not None:
@@ -2169,8 +2554,20 @@ class DSBHybrid(nn.Module):
                                 exempt_tokens=exempt_tokens,
                             )
                             if sub_sample:
-                                gen_toks[pos] = sub_sample[0]
-                                accum_chosen.append(sub_sample[0])
+                                sampled_tok = sub_sample[0]
+                                if unroll_subwords and tokenizer is not None and embedder is not None:
+                                    prefix_for_pos = [t for t in canvases[b][:pos] if t not in special]
+                                    unrolled = self._unroll_subwords(
+                                        prefix_ids=prefix_for_pos,
+                                        start_token_id=sampled_tok,
+                                        tokenizer=tokenizer,
+                                        embedder=embedder,
+                                        max_unroll=max_unroll_subwords,
+                                    )
+                                    gen_toks[pos] = unrolled if len(unrolled) > 1 else sampled_tok
+                                else:
+                                    gen_toks[pos] = sampled_tok
+                                accum_chosen.append(sampled_tok)
                     else:
                         sampled_tokens = self._sample_topk(
                             gen_logits, temperature, top_k, top_p,
@@ -2185,7 +2582,18 @@ class DSBHybrid(nn.Module):
                         )
                         for pos, tok_id in zip(gen_positions, sampled_tokens):
                             if pos < len(gen_toks):
-                                gen_toks[pos] = tok_id
+                                if unroll_subwords and tokenizer is not None and embedder is not None:
+                                    prefix_for_pos = [t for t in canvases[b][:pos] if t not in special]
+                                    unrolled = self._unroll_subwords(
+                                        prefix_ids=prefix_for_pos,
+                                        start_token_id=tok_id,
+                                        tokenizer=tokenizer,
+                                        embedder=embedder,
+                                        max_unroll=max_unroll_subwords,
+                                    )
+                                    gen_toks[pos] = unrolled if len(unrolled) > 1 else tok_id
+                                else:
+                                    gen_toks[pos] = tok_id
 
                 # Apply edits -> genuinely variable-length output (INSERT grows,
                 # DELETE trims, EXPAND splits), capped at max_len.
@@ -2243,12 +2651,20 @@ class DSBHybrid(nn.Module):
                             detail += "[DELETE]"
                         elif tg == REPLACE:
                             rep_tok_id = gen_toks[pos]
-                            rep_str = repr(tokenizer.decode([rep_tok_id]))[1:-1]
-                            detail += f"-> {rep_str} (id={rep_tok_id})"
+                            if isinstance(rep_tok_id, list):
+                                rep_str = repr(tokenizer.decode(rep_tok_id))[1:-1]
+                                detail += f"-> {rep_str} (ids={rep_tok_id}, multi-token)"
+                            else:
+                                rep_str = repr(tokenizer.decode([rep_tok_id]))[1:-1]
+                                detail += f"-> {rep_str} (id={rep_tok_id})"
                         elif tg == INSERT:
                             ins_tok_id = gen_toks[pos]
-                            ins_str = repr(tokenizer.decode([ins_tok_id]))[1:-1]
-                            detail += f"+ins {ins_str} (id={ins_tok_id})"
+                            if isinstance(ins_tok_id, list):
+                                ins_str = repr(tokenizer.decode(ins_tok_id))[1:-1]
+                                detail += f"+ins {ins_str} (ids={ins_tok_id}, multi-token)"
+                            else:
+                                ins_str = repr(tokenizer.decode([ins_tok_id]))[1:-1]
+                                detail += f"+ins {ins_str} (id={ins_tok_id})"
                         elif tg == EXPAND:
                             detail += "[EXPAND 2x<mask/mask>]"
 
@@ -2262,13 +2678,15 @@ class DSBHybrid(nn.Module):
                         if tags[pos] != KEEP:
                             orig_repr = repr(tokenizer.decode([cur_tokens[pos]]))
                             if tags[pos] == REPLACE:
-                                new_repr = repr(tokenizer.decode([gen_toks[pos]]))
+                                rep_val = gen_toks[pos]
+                                new_repr = repr(tokenizer.decode(rep_val if isinstance(rep_val, list) else [rep_val]))
                                 note = f" [{override_notes[pos]}]" if override_notes[pos] else ""
                                 edits.append(f"Pos {pos} {orig_repr} -> REPLACE -> {new_repr}{note}")
                             elif tags[pos] == DELETE:
                                 edits.append(f"Pos {pos} {orig_repr} -> DELETE")
                             elif tags[pos] == INSERT:
-                                ins_repr = repr(tokenizer.decode([gen_toks[pos]]))
+                                ins_val = gen_toks[pos]
+                                ins_repr = repr(tokenizer.decode(ins_val if isinstance(ins_val, list) else [ins_val]))
                                 edits.append(f"Pos {pos} {orig_repr} -> INSERT {ins_repr}")
                             elif tags[pos] == EXPAND:
                                 edits.append(f"Pos {pos} {orig_repr} -> EXPAND")
@@ -2292,7 +2710,12 @@ class DSBHybrid(nn.Module):
                         conf = raw_probs[pos][tg] if (raw_probs and pos < len(raw_probs)) else 1.0
                         tok_id = cur_tokens[pos]
                         act_tok = gen_toks[pos] if (tg in (REPLACE, INSERT) and pos < len(gen_toks)) else None
-                        act_str = tokenizer.decode([act_tok]) if act_tok is not None else ""
+                        if isinstance(act_tok, list):
+                            act_str = tokenizer.decode(act_tok)
+                        elif act_tok is not None:
+                            act_str = tokenizer.decode([act_tok])
+                        else:
+                            act_str = ""
                         token_details.append({
                             "pos": pos,
                             "token_id": tok_id,
