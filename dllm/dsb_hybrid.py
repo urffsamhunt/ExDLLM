@@ -295,7 +295,7 @@ def corrupt_multiroute(
     burst_stutter_max_len: int = 20,
     noise_pool: Optional[List[int]] = None,
     mask_id: int = 250001,
-    expand_id: int = 50269,
+    expand_id: Optional[int] = None,
     rng: Optional[random.Random] = None,
 ) -> Tuple[List[int], List[int], List[int], List[int]]:
     """
@@ -2493,8 +2493,6 @@ class DSBHybrid(nn.Module):
 
                     # Prevent self-replacement loops, ping-pong oscillation, and spurious delimiter collapse:
                     punc_tokens = {46, 20, 1104}  # en-dash, hyphen, em-dash
-                    # Dangling syntax tokens that should not end a clause immediately before punctuation or EOS:
-                    dangling_syntax_tokens = {23, 10, 70, 450, 903, 136, 678, 1295, 3688}  # in, a, the, that, this, and, with, from, here
                     for i_sel, pos in enumerate(gen_positions):
                         tg = tags[pos]
                         cur_t = canvases[b][pos]
@@ -2510,11 +2508,6 @@ class DSBHybrid(nn.Module):
                                 for p_id in punc_tokens:
                                     if p_id < gen_logits.shape[-1]:
                                         gen_logits[i_sel, p_id] = -1e9
-                            # Dangling syntax suppression: if replacing immediately before punctuation or EOS, suppress prepositions/connectors
-                            if pos + 1 < len(canvases[b]) and canvases[b][pos + 1] in (eos, 4, 5, 20, 46):
-                                for d_id in dangling_syntax_tokens:
-                                    if d_id < gen_logits.shape[-1]:
-                                        gen_logits[i_sel, d_id] = -1e9
 
                     # Build per-position penalized candidate list based on repetition_window
                     penalized_per_pos = []
@@ -2769,6 +2762,12 @@ class DSBHybrid(nn.Module):
                 dp1_cur = dp1  # Maintain original prompt reference condition!
             else:
                 dp1_cur = embedded  # Legacy self-conditioning
+
+            # After re-embedding through the encoder, the representations are
+            # clean Layer 12 contextual hidden states (t=0 semantics), NOT SDE
+            # terminal states (t=1). Decay t_eval to 0.0 so the conditioned
+            # tagger/generator heads receive the correct time signal.
+            t_eval = 0.0
 
         # Final decode.
         results = []

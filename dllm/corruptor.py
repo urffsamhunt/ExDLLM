@@ -92,7 +92,7 @@ class ForwardCorruptor:
         self.delete_id = getattr(tokenizer, "delete_id", 50266)
         self.replace_id = getattr(tokenizer, "replace_id", 50267)
         self.insert_id = getattr(tokenizer, "insert_id", 50268)
-        self.expand_id = getattr(tokenizer, "expand_id", 50269)
+        self.expand_id = getattr(tokenizer, "expand_id", self.mask_id)
 
         for attr, val in [
             ("mask_id", self.mask_id),
